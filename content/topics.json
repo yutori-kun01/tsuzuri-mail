@@ -1,0 +1,4 @@
+[
+  { "slug": "newsletter", "name": "メルマガ本誌", "description": "定期的にお届けするメールマガジン", "default_subscribed": true },
+  { "slug": "campaign", "name": "キャンペーン・お知らせ", "description": "特典や新しい企画のご案内", "default_subscribed": true }
+]

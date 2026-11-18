@@ -1,0 +1,35 @@
+[Unit]
+Description=tsuzuri-mail (newsletter and step mail)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tsuzuri
+Group=tsuzuri
+WorkingDirectory=/opt/tsuzuri/app
+EnvironmentFile=/etc/tsuzuri/tsuzuri.env
+ExecStart=/usr/bin/node --import tsx packages/server/src/vps/main.ts
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# 権限を絞る（書き込めるのは /var/lib/tsuzuri だけ）
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/tsuzuri
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+{
+  "name": "tsuzuri-mail",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/server --noEmit && tsc -p infra --noEmit",
+    "tsuzuri": "tsx packages/server/src/cli.ts",
+    "start:vps": "node --import tsx packages/server/src/vps/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

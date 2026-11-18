@@ -1,0 +1,11 @@
+{
+  "tsuzuri:hosting": "vps",
+  "tsuzuri:domain": "example.com",
+  "tsuzuri:sendingSubdomain": "mail",
+  "tsuzuri:publicHost": "mail.example.com",
+  "tsuzuri:fromLocalPart": "info",
+  "tsuzuri:sesSandbox": true,
+  "tsuzuri:maxSendRate": 1,
+  "tsuzuri:manageIdentity": false,
+  "tsuzuri:extraSendingDomains": []
+}

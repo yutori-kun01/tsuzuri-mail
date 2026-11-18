@@ -1,0 +1,14 @@
+**/node_modules
+.git
+.github
+.data
+.env
+.env.*
+**/*.log
+coverage
+preview.html
+content/settings.json
+infra
+docs
+deploy
+apps

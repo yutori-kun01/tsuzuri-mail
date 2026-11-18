@@ -1,0 +1,55 @@
+# tsuzuri-mail を Docker で動かす。設定・秘密値・データは ~/tsuzuri に置く（TSUZURI_HOME で変更可）。
+#   ~/tsuzuri/tsuzuri.env        設定と秘密値（init.sh が雛形から作る。600）
+#   ~/tsuzuri/supabase-ca.crt    Supabase の CA 証明書（公開情報）
+#   ~/tsuzuri/data/files         特典ファイル
+#   ~/tsuzuri/data/backups       毎晩のバックアップ
+# アプリは VPS の 127.0.0.1:8787 だけで待ち受ける。HTTPS は手前のリバースプロキシ（Caddy など）が受ける。
+name: tsuzuri
+
+x-common: &common
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  image: tsuzuri-mail:latest
+  env_file:
+    - ${TSUZURI_HOME:-${HOME}/tsuzuri}/tsuzuri.env
+  environment:
+    # コンテナ内の場所（tsuzuri.env の値より優先する）
+    TSUZURI_ENV_FILE: /config/tsuzuri.env
+    FILES_DIR: /data/files
+    BACKUP_DIR: /data/backups
+    HOST: 0.0.0.0
+    PORT: "8787"
+  user: "${TSUZURI_UID:-1000}:${TSUZURI_GID:-1000}"
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  tsuzuri:
+    <<: *common
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ${TSUZURI_HOME:-${HOME}/tsuzuri}:/config:ro
+      - ${TSUZURI_HOME:-${HOME}/tsuzuri}/data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  # 管理用のコマンド（admin:setup、doctor、import、sync など）。設定ファイルに書き込めるのはこちらだけ。
+  #   docker compose -f deploy/docker/compose.yml run --rm cli admin:setup --local --env-file /config/tsuzuri.env
+  cli:
+    <<: *common
+    profiles: ["cli"]
+    entrypoint: ["node", "--import", "tsx", "src/cli.ts"]
+    volumes:
+      - ${TSUZURI_HOME:-${HOME}/tsuzuri}:/config
+      - ${TSUZURI_HOME:-${HOME}/tsuzuri}/data:/data

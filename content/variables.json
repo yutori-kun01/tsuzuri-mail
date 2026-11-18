@@ -1,0 +1,4 @@
+[
+  { "key": "blog_url", "value": "https://example.com/", "kind": "url", "note": "ブログのトップ" },
+  { "key": "署名", "value": "――\n書き手より", "kind": "text", "note": "メール末尾の署名" }
+]

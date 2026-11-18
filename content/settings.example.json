@@ -1,0 +1,10 @@
+{
+  "fromAddress": "info@mail.example.com",
+  "fromName": "（送信者名）",
+  "senderName": "（送信者の氏名または名称：特定電子メール法の表示）",
+  "senderInfoUrl": "",
+  "senderAddress": "（住所：/legal ページに表示。senderInfoUrl を使うなら空でよい）",
+  "contact": "（問い合わせ先の URL かメールアドレス）",
+  "footerExtraLines": [],
+  "defaultName": "読者"
+}

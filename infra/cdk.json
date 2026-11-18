@@ -1,0 +1,15 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "context": {
+    "tsuzuri:hosting": "vps",
+    "tsuzuri:domain": "example.com",
+    "tsuzuri:sendingSubdomain": "mail",
+    "tsuzuri:manageIdentity": false,
+    "tsuzuri:sesSandbox": true,
+    "tsuzuri:maxSendRate": 1,
+    "tsuzuri:publicHost": "mail.example.com",
+    "tsuzuri:fromLocalPart": "info",
+    "tsuzuri:paramPrefix": "/tsuzuri/",
+    "tsuzuri:databaseCaSha256": "807025AD50D4ED219D2C9C7D299C004F824EB00CF7F65AFEF607D07B72E6CAFA"
+  }
+}

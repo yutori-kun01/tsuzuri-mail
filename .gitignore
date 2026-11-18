@@ -8,3 +8,9 @@ coverage/
 .DS_Store
 cdk.out/
 .sst/
+.data/
+preview.html
+content/settings.json
+infra/cdk.out/
+infra/cdk.context.json
+infra/tsuzuri.local.json

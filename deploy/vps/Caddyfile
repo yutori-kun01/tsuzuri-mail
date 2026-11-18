@@ -1,0 +1,18 @@
+# /etc/caddy/Caddyfile
+# HTTPS の証明書は Caddy が Let's Encrypt から自動で取得・更新する（DNS の A レコードが VPS を向いていること）
+mail.example.com {
+	encode gzip
+	request_body {
+		max_size 6MB
+	}
+	header {
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8787
+	log {
+		output file /var/log/caddy/tsuzuri.log {
+			roll_size 10MiB
+			roll_keep 10
+		}
+	}
+}
