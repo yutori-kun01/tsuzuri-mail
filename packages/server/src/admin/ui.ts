@@ -338,6 +338,10 @@ a.flow-chip:hover{border-color:var(--accent)}
 .flow-node .flow-body{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}.flow-node .flow-body a{color:var(--ink);text-decoration:none}.flow-node .flow-body a:hover{color:var(--accent)}
 .flow-actions{display:flex;gap:var(--space-1);align-items:center;flex:none}.flow-actions .btn,.flow-actions button{height:30px;padding:0 var(--space-2);font-size:13px}
 .flow-add{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px dashed var(--accent);border-radius:var(--radius-pill);color:var(--accent);font-weight:500;text-decoration:none;font-size:13px;background:var(--surface)}.flow-add:hover{background:var(--accent-soft)}
+dialog.modal{width:min(560px,calc(100vw - 32px));padding:var(--space-6);border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface);color:var(--ink);box-shadow:var(--shadow-card)}
+dialog.modal::backdrop{background:color-mix(in srgb,var(--brand-deep) 45%,transparent)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2)}.modal-head h2{margin:0}
+dialog.modal .row{flex-direction:column;gap:0}dialog.modal .actions{justify-content:flex-end}
 .add-step>summary{display:flex;align-items:center;gap:var(--space-2);cursor:pointer;font-weight:600;font-size:16px;list-style:none}.add-step>summary::-webkit-details-marker{display:none}.add-step[open]>summary{margin-bottom:var(--space-3)}
 .fedit{display:grid;grid-template-columns:176px minmax(0,1fr);gap:var(--space-4);align-items:start}
 .fnav{position:sticky;top:var(--space-4);display:flex;flex-direction:column;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-2)}
@@ -431,7 +435,7 @@ export function adminPage(o: PageOptions): string {
   // 完了・エラーの知らせは右下のトースト（完了は数秒で消える。エラーは閉じるまで残す）
   const toast = o.flash
     ? `<div class="toast${o.flash.kind === "error" ? " error" : ""}" role="${o.flash.kind === "error" ? "alert" : "status"}" id="toast">${icon(o.flash.kind === "error" ? "circle-x" : "circle-check", 18)}<span>${h(o.flash.text)}</span><button type="button" aria-label="閉じる" onclick="this.parentNode.remove()">${icon("x", 16)}</button></div>
-<script>(function(){var t=document.getElementById("toast");if(!t)return;var u=new URL(location.href);u.searchParams.delete("ok");u.searchParams.delete("err");history.replaceState(null,"",u.pathname+(u.search||""));if(!t.classList.contains("error"))setTimeout(function(){t.classList.add("hide");setTimeout(function(){t.remove()},300)},4000)})();</script>`
+<script>(function(){var t=document.getElementById("toast");if(!t)return;var u=new URL(location.href);u.searchParams.delete("ok");u.searchParams.delete("err");history.replaceState(null,"",u.pathname+(u.search||"")+u.hash);if(!t.classList.contains("error"))setTimeout(function(){t.classList.add("hide");setTimeout(function(){t.remove()},300)},4000)})();</script>`
     : "";
   return `${head(o.title)}
 <body><header class="topbar">${brandLink("tz-m")}<details class="menu"><summary aria-label="メニュー">${icon("menu", 22)}</summary><nav aria-label="管理メニュー">${nav}${logout}</nav></details></header>
@@ -452,6 +456,18 @@ export function pageHeader(o: { title: string; desc?: string; actions?: string; 
 /** 何も無いときの案内（次にすることを 1 つ示す） */
 export function emptyState(o: { icon: IconName; title: string; text: string; action?: string }): string {
   return `<div class="empty"><span class="empty-icon">${icon(o.icon, 22)}</span><b>${h(o.title)}</b><p>${h(o.text)}</p>${o.action ?? ""}</div>`;
+}
+
+/**
+ * 小窓（作成フォームなど）。data-dialog="id" を付けたボタンで開く。
+ * ページを開いたときに URL が #id なら最初から開く。
+ */
+export function modal(o: { id: string; title: string; body: string }): string {
+  return `<dialog class="modal" id="${h(o.id)}" aria-labelledby="${h(o.id)}-title"><div class="modal-head"><h2 id="${h(o.id)}-title">${h(o.title)}</h2><button type="button" class="sub icon-only" data-close title="閉じる" aria-label="閉じる">${icon("x", 16)}</button></div>${o.body}</dialog>
+<script>(function(){var d=document.getElementById(${JSON.stringify(o.id)});if(!d)return;function open(){d.showModal();var i=d.querySelector('input:not([type=hidden])');if(i)i.focus()}
+document.querySelectorAll('[data-dialog=${JSON.stringify(o.id).slice(1, -1)}]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();open()})});
+d.querySelectorAll('[data-close]').forEach(function(b){b.addEventListener('click',function(){d.close()})});
+d.addEventListener('click',function(e){if(e.target===d)d.close()});if(location.hash==='#'+d.id)open()})();</script>`;
 }
 
 /** 主ボタン風のリンク（アイコン付き） */

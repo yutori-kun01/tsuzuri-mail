@@ -15,9 +15,9 @@ import { icon } from "./icons.js";
 import { describeTiming } from "../time.js";
 import { listRoutes, PERIODS, periodStart } from "./routes.js";
 import { analyticsPanel } from "./analytics.js";
-import { groupedList, groupField, groupManager, groupMover, listGroups, resolveGroupId } from "./groups.js";
+import { groupCreator, groupedList, groupField, listGroups, resolveGroupId } from "./groups.js";
 import { sequenceAnalytics } from "../services/analytics.js";
-import { adminPage, emptyState, fromJstInput, h, linkButton, pageHeader, pct, statusPill, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
+import { adminPage, emptyState, fromJstInput, h, linkButton, modal, pageHeader, pct, statusPill, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
 import type { IconName } from "./icons.js";
 
 /** シナリオ画面の区分（左のメニュー） */
@@ -227,35 +227,34 @@ export function registerContent(app: Hono, getCtx: () => Promise<AppContext>, _o
               (SELECT count(*) FROM sequence_steps st WHERE st.sequence_id = s.id)::int AS steps,
               (SELECT count(*) FROM enrollments e WHERE e.sequence_id = s.id AND e.status = 'active')::int AS active,
               (SELECT count(*) FROM enrollments e WHERE e.sequence_id = s.id AND e.status = 'completed')::int AS completed
-         FROM sequences s ORDER BY s.created_at`,
+         FROM sequences s ORDER BY s.list_position NULLS LAST, s.created_at`,
     );
     const groups = await listGroups(ctx, "sequence");
-    const createCard = `<details class="card add-step" id="new-seq"${rows.length ? "" : " open"}><summary>${icon("plus", 16)}新しいシナリオを作る</summary>
-<form method="post" action="/admin/sequences">
-<p class="muted" style="margin:0">シナリオを作ると、登録フォームも一緒にできます（フォームから登録した人に、このシナリオが届きます）。作ったあと、1 通目から追加していきます。</p><div class="row">
+    const createDialog = modal({
+      id: "new-seq",
+      title: "新しいシナリオ",
+      body: `<form method="post" action="/admin/sequences">
+<p class="muted" style="margin-top:0">シナリオを作ると、登録フォームも一緒にできます（フォームから登録した人に、このシナリオが届きます）。作ったあと、1 通目から追加していきます。</p><div class="row">
 <div><label>名前（例：SEO チェックリスト特典）</label><input type="text" name="name" required maxlength="80"></div>
 <div><label>識別名（任意。フォームの URL になります。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${groupField(groups)}</div>
-<div class="actions"><button type="submit">${icon("plus", 16)}シナリオとフォームを作る</button></div></form></details>`;
+<div class="actions"><button type="button" class="sub" data-close>やめる</button><button type="submit">${icon("plus", 16)}シナリオとフォームを作る</button></div></form>`,
+    });
     const body = `${pageHeader({
       title: "シナリオ",
       desc: "登録やタグをきっかけに、決めた順番・間隔で自動で届くステップメールです。",
-      actions: `<a class="btn" href="#new-seq" data-open="new-seq">${icon("plus", 16)}新しいシナリオ</a>`,
+      actions: `<button type="button" data-dialog="new-seq">${icon("plus", 16)}新しいシナリオ</button>`,
     })}
-${createCard}
-${groupManager("sequence", groups)}
-${rows.length ? "" : emptyState({ icon: "workflow", title: "まだシナリオがありません", text: "上で名前を決めて作り、1 通目から追加していきます。" })}
-${groupedList(
-  rows,
+${groupCreator("sequence")}
+${rows.length ? "" : emptyState({ icon: "workflow", title: "まだシナリオがありません", text: "名前を決めて作り、1 通目から追加していきます。", action: `<button type="button" data-dialog="new-seq">${icon("plus", 16)}新しいシナリオ</button>` })}
+${groupedList({
+  kind: "sequence",
+  items: rows,
   groups,
-  (part) => `<div class="wrap"><table><tr><th>名前</th><th>状態</th><th>種類</th><th>通数</th><th>進行中</th><th>完了</th>${groups.length ? "<th class=\"col-group\">グループ</th>" : ""}</tr>
-${part
-  .map(
-    (r) => `<tr><td><a href="/admin/sequences/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${statusPill(r.status)}</td>
-<td>${r.purpose === "reengage" ? "休眠者の再確認" : "通常"}</td><td>${r.steps}</td><td>${r.active}</td><td>${r.completed}</td>${groups.length ? `<td>${groupMover("sequence", r.id, r.group_id, groups)}</td>` : ""}</tr>`,
-  )
-  .join("")}</table></div>`,
-)}
-<script>document.querySelectorAll('[data-open]').forEach(function(a){a.addEventListener('click',function(e){var d=document.getElementById(a.dataset.open);if(d){e.preventDefault();d.open=true;d.scrollIntoView({behavior:'smooth',block:'start'});var i=d.querySelector('input[name=name]');if(i)i.focus()}})});</script>`;
+  head: "<th>名前</th><th>状態</th><th>種類</th><th>通数</th><th>進行中</th><th>完了</th>",
+  row: (r) => `<td><a href="/admin/sequences/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${statusPill(r.status)}</td>
+<td>${r.purpose === "reengage" ? "休眠者の再確認" : "通常"}</td><td>${r.steps}</td><td>${r.active}</td><td>${r.completed}</td>`,
+})}
+${createDialog}`;
     return c.html(adminPage({ title: "シナリオ", active: "/admin/sequences", body, flash: flashFrom(c) }));
   });
 
@@ -588,23 +587,20 @@ ${stepEditor(id, st, st.is_first, await tagsWithCounts(ctx))}
       `SELECT f.id, f.slug, f.name, f.active, f.double_optin, s.name AS sequence, f.group_id,
               (SELECT count(*) FROM consents co WHERE co.form_id = f.id)::int AS signups,
               (SELECT count(*) FROM consents co WHERE co.form_id = f.id AND co.confirmed_at IS NOT NULL)::int AS confirmed
-         FROM forms f LEFT JOIN sequences s ON s.id = f.sequence_id ORDER BY f.created_at`,
+         FROM forms f LEFT JOIN sequences s ON s.id = f.sequence_id ORDER BY f.list_position NULLS LAST, f.created_at`,
     );
     const groups = await listGroups(ctx, "form");
     const body = `${pageHeader({ title: "フォーム", desc: "キャンペーン・メルマガごとに 1 つ作ります（シナリオを作ると対のフォームが自動でできます）。作ったばかりのフォームは「停止」なので、内容を整えたら「受付を始める」を押してください。" })}
 ${rows.length ? "" : emptyState({ icon: "file-input", title: "まだフォームがありません", text: "フォームを作ると、登録ページの URL と、他のサイトに貼れるフォームタグが手に入ります。" })}
-${groupManager("form", groups)}
-${groupedList(
-  rows,
+${groupCreator("form")}
+${groupedList({
+  kind: "form",
+  items: rows,
   groups,
-  (part) => `<div class="wrap"><table><tr><th>名前</th><th>受付</th><th>登録の確認</th><th>始めるシナリオ</th><th>登録</th><th>確定</th><th>確定率</th>${groups.length ? "<th class=\"col-group\">グループ</th>" : ""}<th></th></tr>
-${part
-  .map(
-    (r) => `<tr><td><a href="/admin/forms/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${r.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'}</td>
-<td>${r.double_optin ? "ダブル" : "シングル"}</td><td>${h(r.sequence ?? "なし（メルマガのみ）")}</td><td>${r.signups}</td><td>${r.confirmed}</td><td>${pct(r.confirmed, r.signups)}</td>${groups.length ? `<td>${groupMover("form", r.id, r.group_id, groups)}</td>` : ""}<td>${formToggle(r.id, r.active, "/admin/forms")}</td></tr>`,
-  )
-  .join("")}</table></div>`,
-)}
+  head: '<th>名前</th><th>受付</th><th>登録の確認</th><th class="col-wide">始めるシナリオ</th><th>登録</th><th>確定</th><th>確定率</th><th class="col-act"></th>',
+  row: (r) => `<td><a href="/admin/forms/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${r.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'}</td>
+<td>${r.double_optin ? "ダブル" : "シングル"}</td><td>${h(r.sequence ?? "なし（メルマガのみ）")}</td><td>${r.signups}</td><td>${r.confirmed}</td><td>${pct(r.confirmed, r.signups)}</td><td>${formToggle(r.id, r.active, "/admin/forms")}</td>`,
+})}
 <h2>メルマガだけのフォームを作る</h2><form method="post" action="/admin/forms" class="card"><p class="muted" style="margin:0">ステップメールなしで、メルマガの読者だけを集めるフォームです。特典つきのキャンペーンは「シナリオ」から作ると、フォームも一緒にできます。</p><div class="row">
 <div><label>名前</label><input type="text" name="name" required maxlength="80"></div>
 <div><label>識別名（任意。URL に使います。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${groupField(groups)}</div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupItems, moveGroup, normalizeGroupName, type Group } from "./groups.js";
+import { groupItems, normalizeGroupName, parseLayout, type Group } from "./groups.js";
 
 const groups: Group[] = [
   { id: "b", name: "ステップ", position: 2 },
@@ -19,29 +19,40 @@ describe("groupItems", () => {
     expect(s[2]!.items.map((x) => x.id)).toEqual(["1", "4"]);
   });
 
-  it("空のグループも出し、グループなしは中身があるときだけ出す", () => {
+  it("空のグループも、空のグループなしも出す。グループが無ければ空", () => {
     const s = groupItems([{ id: "1", group_id: "a" }], groups);
     expect(s.map((x) => [x.group?.id ?? null, x.items.length])).toEqual([
+      [null, 0],
       ["a", 1],
       ["b", 0],
     ]);
+    expect(groupItems([{ id: "1", group_id: null }], [])).toEqual([]);
   });
 
   it("存在しないグループを指す項目はグループなしに入れる", () => {
-    const s = groupItems([{ id: "1", group_id: "gone" }], []);
-    expect(s).toEqual([{ group: null, items: [{ id: "1", group_id: "gone" }] }]);
+    const s = groupItems([{ id: "1", group_id: "gone" }], groups);
+    expect(s[0]).toEqual({ group: null, items: [{ id: "1", group_id: "gone" }] });
   });
 });
 
-describe("moveGroup", () => {
-  it("上下に入れ替える", () => {
-    expect(moveGroup(groups, "b", -1)).toEqual(["b", "a"]);
-    expect(moveGroup(groups, "a", 1)).toEqual(["b", "a"]);
+describe("parseLayout", () => {
+  const known = { groups: new Set(["a", "b"]), items: new Set(["1", "2"]) };
+  it("並びと所属を読み取る（空のグループ id はグループなし）", () => {
+    expect(parseLayout(["b", "a"], ["2:a", "1:"], known)).toEqual({
+      groups: ["b", "a"],
+      items: [
+        { id: "2", group: "a" },
+        { id: "1", group: null },
+      ],
+    });
   });
-  it("端や見つからないときは今の並び", () => {
-    expect(moveGroup(groups, "a", -1)).toEqual(["a", "b"]);
-    expect(moveGroup(groups, "b", 1)).toEqual(["a", "b"]);
-    expect(moveGroup(groups, "x", 1)).toEqual(["a", "b"]);
+  it("知らない id・重複・形の崩れは受け付けない", () => {
+    expect(parseLayout(["x"], [], known)).toBeNull();
+    expect(parseLayout(["a", "a"], [], known)).toBeNull();
+    expect(parseLayout([], ["9:a"], known)).toBeNull();
+    expect(parseLayout([], ["1:x"], known)).toBeNull();
+    expect(parseLayout([], ["1:a", "1:b"], known)).toBeNull();
+    expect(parseLayout([], ["1"], known)).toBeNull();
   });
 });
 
