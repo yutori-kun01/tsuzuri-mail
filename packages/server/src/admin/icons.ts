@@ -74,7 +74,9 @@ export type IconName =
   | "trash"
   | "layout-template"
   | "globe"
-  | "pencil";
+  | "pencil"
+  | "folder"
+  | "arrow-up";
 
 export function icon(name: IconName, size = 16, cls = "icon"): string {
   const node = load()[name];

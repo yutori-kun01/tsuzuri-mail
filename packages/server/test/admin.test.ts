@@ -430,3 +430,72 @@ describe("signup routes and scenario analytics", () => {
     expect(page).toContain("登録経路別");
   });
 });
+
+describe("admin groups", () => {
+  const sectionOrder = (html: string) => [...html.matchAll(/class="group-head">.*?<h2>([^<]+)<\/h2>/g)].map((m) => m[1]);
+  const rowOrder = (html: string) => [...html.matchAll(/<tr data-id="([^"]+)">/g)].map((m) => m[1]);
+
+  it("groups scenarios, saves drag-and-drop order and keeps them when a group is deleted", async () => {
+    const cookie = await loginCookie();
+    // グループが無いうちは表 1 つ。作成は右上のボタンから開く小窓
+    await post("/admin/sequences", { name: "ゆとりメルマガ", slug: "yutori" }, cookie);
+    let page = await (await get("/admin/sequences", cookie)).text();
+    expect(page).not.toContain('class="group-card"');
+    expect(page).toContain('<dialog class="modal" id="new-seq"');
+    expect(page).toContain('data-dialog="new-seq"');
+
+    // 作るとそのグループの位置へ飛ぶ
+    const created = await post("/admin/groups", { kind: "sequence", name: "商品受け渡し" }, cookie);
+    expect(created.status).toBe(303);
+    expect(created.headers.get("location")).toMatch(/^\/admin\/sequences\?ok=.+#g-[0-9a-f-]+$/);
+    await post("/admin/groups", { kind: "sequence", name: "ステップ" }, cookie);
+    const dup = await post("/admin/groups", { kind: "sequence", name: "ステップ" }, cookie);
+    expect(decodeURIComponent(dup.headers.get("location") ?? "")).toContain("同じ名前のグループがあります");
+    // 同じ名前でも種類が違えば作れる
+    await post("/admin/groups", { kind: "form", name: "ステップ" }, cookie);
+
+    const groups = await env.ctx.db.query<{ id: string; name: string; kind: string }>("SELECT id, name, kind FROM item_groups ORDER BY position");
+    const gift = groups.find((g) => g.kind === "sequence" && g.name === "商品受け渡し")!;
+    const step = groups.find((g) => g.kind === "sequence" && g.name === "ステップ")!;
+    const formGroup = groups.find((g) => g.kind === "form")!;
+
+    // 作るときにグループを選べる
+    await post("/admin/sequences", { name: "分析シート", slug: "sheet", group_id: gift.id }, cookie);
+    page = await (await get("/admin/sequences", cookie)).text();
+    expect(page).toContain(`id="g-${gift.id}"`);
+    expect(sectionOrder(page)).toEqual(["グループなし", "商品受け渡し", "ステップ"]);
+
+    // ドラッグ後の並びを保存：グループの順、項目の順と所属
+    const seq = Object.fromEntries((await env.ctx.db.query<{ id: string; slug: string }>("SELECT id, slug FROM sequences")).map((r) => [r.slug, r.id]));
+    const order = (groupsOrder: string[], items: string[]) => post("/admin/groups/order", { kind: "sequence", groups: groupsOrder, items }, cookie);
+    expect((await order([step.id, gift.id], [`${seq.sheet}:${gift.id}`, `${seq.yutori}:${gift.id}`])).status).toBe(200);
+    page = await (await get("/admin/sequences", cookie)).text();
+    expect(sectionOrder(page)).toEqual(["グループなし", "ステップ", "商品受け渡し"]);
+    expect(rowOrder(page)).toEqual([seq.sheet, seq.yutori]);
+    // 知らない id や別の種類のグループは受け付けず、何も変えない
+    expect((await order([formGroup.id], [])).status).toBe(400);
+    expect((await order([], [`${seq.sheet}:${formGroup.id}`])).status).toBe(400);
+    expect(rowOrder(await (await get("/admin/sequences", cookie)).text())).toEqual([seq.sheet, seq.yutori]);
+
+    await post(`/admin/groups/${gift.id}/rename`, { name: "【商品受け渡し】" }, cookie);
+    expect(sectionOrder(await (await get("/admin/sequences", cookie)).text())).toEqual(["グループなし", "ステップ", "【商品受け渡し】"]);
+
+    // グループを消しても、シナリオは消えずグループなしに戻る
+    await post(`/admin/groups/${gift.id}/delete`, {}, cookie);
+    const left = await env.ctx.db.query<{ group_id: string | null }>("SELECT group_id FROM sequences");
+    expect(left).toHaveLength(2);
+    expect(left.every((r) => r.group_id === null)).toBe(true);
+  });
+
+  it("groups forms and keeps the newsletter-only form at the bottom", async () => {
+    const cookie = await loginCookie();
+    await post("/admin/groups", { kind: "form", name: "特典" }, cookie);
+    const [g] = await env.ctx.db.query<{ id: string }>("SELECT id FROM item_groups");
+    await post("/admin/forms", { name: "特典A", slug: "gift-a", group_id: g!.id }, cookie);
+    await post("/admin/forms", { name: "メルマガ", slug: "news" }, cookie);
+    const page = await (await get("/admin/forms", cookie)).text();
+    expect(sectionOrder(page)).toEqual(["グループなし", "特典"]);
+    expect(page).toContain('data-kind="form"');
+    expect(page.indexOf('id="grouped"')).toBeLessThan(page.indexOf("メルマガだけのフォームを作る"));
+  });
+});

@@ -13,6 +13,7 @@ import { registerAutomations } from "./automations.js";
 import { registerFooters } from "./footers.js";
 import { registerDomains } from "./domains.js";
 import { registerRoutes } from "./routes.js";
+import { registerGroups } from "./groups.js";
 import { registerReaderAdd } from "./readers-add.js";
 import { registerTopics } from "./topics.js";
 import { htmxScriptPath, icon } from "./icons.js";
@@ -751,6 +752,7 @@ ${vars
   registerFooters(app, getCtx);
   registerDomains(app, getCtx);
   registerRoutes(app, getCtx);
+  registerGroups(app, getCtx);
   registerAutomations(app, getCtx);
   registerTopics(app, getCtx);
   registerContent(app, getCtx, opts);

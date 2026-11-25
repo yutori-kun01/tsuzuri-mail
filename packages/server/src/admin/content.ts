@@ -15,8 +15,9 @@ import { icon } from "./icons.js";
 import { describeTiming } from "../time.js";
 import { listRoutes, PERIODS, periodStart } from "./routes.js";
 import { analyticsPanel } from "./analytics.js";
+import { groupCreator, groupedList, groupField, listGroups, resolveGroupId } from "./groups.js";
 import { sequenceAnalytics } from "../services/analytics.js";
-import { adminPage, emptyState, fromJstInput, h, linkButton, pageHeader, pct, statusPill, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
+import { adminPage, emptyState, fromJstInput, h, linkButton, modal, pageHeader, pct, statusPill, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
 import type { IconName } from "./icons.js";
 
 /** シナリオ画面の区分（左のメニュー） */
@@ -221,34 +222,39 @@ export function registerContent(app: Hono, getCtx: () => Promise<AppContext>, _o
   // ---- シナリオ ----
   app.get("/sequences", async (c) => {
     const ctx = await getCtx();
-    const rows = await ctx.db.query<SequenceRow & { steps: number; active: number; completed: number }>(
-      `SELECT s.id, s.slug, s.name, s.status, s.purpose,
+    const rows = await ctx.db.query<SequenceRow & { steps: number; active: number; completed: number; group_id: string | null }>(
+      `SELECT s.id, s.slug, s.name, s.status, s.purpose, s.group_id,
               (SELECT count(*) FROM sequence_steps st WHERE st.sequence_id = s.id)::int AS steps,
               (SELECT count(*) FROM enrollments e WHERE e.sequence_id = s.id AND e.status = 'active')::int AS active,
               (SELECT count(*) FROM enrollments e WHERE e.sequence_id = s.id AND e.status = 'completed')::int AS completed
-         FROM sequences s ORDER BY s.created_at`,
+         FROM sequences s ORDER BY s.list_position NULLS LAST, s.created_at`,
     );
-    const createCard = `<details class="card add-step" id="new-seq"${rows.length ? "" : " open"}><summary>${icon("plus", 16)}新しいシナリオを作る</summary>
-<form method="post" action="/admin/sequences">
-<p class="muted" style="margin:0">シナリオを作ると、登録フォームも一緒にできます（フォームから登録した人に、このシナリオが届きます）。作ったあと、1 通目から追加していきます。</p><div class="row">
+    const groups = await listGroups(ctx, "sequence");
+    const createDialog = modal({
+      id: "new-seq",
+      title: "新しいシナリオ",
+      body: `<form method="post" action="/admin/sequences">
+<p class="muted" style="margin-top:0">シナリオを作ると、登録フォームも一緒にできます（フォームから登録した人に、このシナリオが届きます）。作ったあと、1 通目から追加していきます。</p><div class="row">
 <div><label>名前（例：SEO チェックリスト特典）</label><input type="text" name="name" required maxlength="80"></div>
-<div><label>識別名（任意。フォームの URL になります。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div></div>
-<div class="actions"><button type="submit">${icon("plus", 16)}シナリオとフォームを作る</button></div></form></details>`;
+<div><label>識別名（任意。フォームの URL になります。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${groupField(groups)}</div>
+<div class="actions"><button type="button" class="sub" data-close>やめる</button><button type="submit">${icon("plus", 16)}シナリオとフォームを作る</button></div></form>`,
+    });
     const body = `${pageHeader({
       title: "シナリオ",
       desc: "登録やタグをきっかけに、決めた順番・間隔で自動で届くステップメールです。",
-      actions: `<a class="btn" href="#new-seq" data-open="new-seq">${icon("plus", 16)}新しいシナリオ</a>`,
+      actions: `<button type="button" data-dialog="new-seq">${icon("plus", 16)}新しいシナリオ</button>`,
     })}
-${createCard}
-${rows.length ? "" : emptyState({ icon: "workflow", title: "まだシナリオがありません", text: "上で名前を決めて作り、1 通目から追加していきます。" })}
-${rows.length ? `<div class="wrap"><table><tr><th>名前</th><th>状態</th><th>種類</th><th>通数</th><th>進行中</th><th>完了</th></tr>
-${rows
-  .map(
-    (r) => `<tr><td><a href="/admin/sequences/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${statusPill(r.status)}</td>
-<td>${r.purpose === "reengage" ? "休眠者の再確認" : "通常"}</td><td>${r.steps}</td><td>${r.active}</td><td>${r.completed}</td></tr>`,
-  )
-  .join("")}</table></div>` : ""}
-<script>document.querySelectorAll('[data-open]').forEach(function(a){a.addEventListener('click',function(e){var d=document.getElementById(a.dataset.open);if(d){e.preventDefault();d.open=true;d.scrollIntoView({behavior:'smooth',block:'start'});var i=d.querySelector('input[name=name]');if(i)i.focus()}})});</script>`;
+${groupCreator("sequence")}
+${rows.length ? "" : emptyState({ icon: "workflow", title: "まだシナリオがありません", text: "名前を決めて作り、1 通目から追加していきます。", action: `<button type="button" data-dialog="new-seq">${icon("plus", 16)}新しいシナリオ</button>` })}
+${groupedList({
+  kind: "sequence",
+  items: rows,
+  groups,
+  head: "<th>名前</th><th>状態</th><th>種類</th><th>通数</th><th>進行中</th><th>完了</th>",
+  row: (r) => `<td><a href="/admin/sequences/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${statusPill(r.status)}</td>
+<td>${r.purpose === "reengage" ? "休眠者の再確認" : "通常"}</td><td>${r.steps}</td><td>${r.active}</td><td>${r.completed}</td>`,
+})}
+${createDialog}`;
     return c.html(adminPage({ title: "シナリオ", active: "/admin/sequences", body, flash: flashFrom(c) }));
   });
 
@@ -258,9 +264,10 @@ ${rows
     const slug = slugOrAuto(one(f, "slug"), "s");
     if (!SLUG.test(slug)) return back(c, "/admin/sequences", "err", "識別名は英小文字・数字・ハイフンで 2〜41 文字にしてください");
     const name = one(f, "name") || slug;
+    const groupId = await resolveGroupId(ctx, "sequence", one(f, "group_id"));
     const rows = await ctx.db.query<{ id: string }>(
-      "INSERT INTO sequences (slug, name, status) VALUES ($1, $2, 'draft') ON CONFLICT (slug) DO NOTHING RETURNING id",
-      [slug, name],
+      "INSERT INTO sequences (slug, name, status, group_id) VALUES ($1, $2, 'draft', $3) ON CONFLICT (slug) DO NOTHING RETURNING id",
+      [slug, name, groupId ?? null],
     );
     if (!rows[0]) return back(c, "/admin/sequences", "err", "同じ識別名のシナリオがあります");
     await audit(ctx.db, "sequence.create", rows[0].id);
@@ -576,24 +583,27 @@ ${stepEditor(id, st, st.is_first, await tagsWithCounts(ctx))}
   // ---- フォーム ----
   app.get("/forms", async (c) => {
     const ctx = await getCtx();
-    const rows = await ctx.db.query<{ id: string; slug: string; name: string; active: boolean; double_optin: boolean; sequence: string | null; signups: number; confirmed: number }>(
-      `SELECT f.id, f.slug, f.name, f.active, f.double_optin, s.name AS sequence,
+    const rows = await ctx.db.query<{ id: string; slug: string; name: string; active: boolean; double_optin: boolean; sequence: string | null; signups: number; confirmed: number; group_id: string | null }>(
+      `SELECT f.id, f.slug, f.name, f.active, f.double_optin, s.name AS sequence, f.group_id,
               (SELECT count(*) FROM consents co WHERE co.form_id = f.id)::int AS signups,
               (SELECT count(*) FROM consents co WHERE co.form_id = f.id AND co.confirmed_at IS NOT NULL)::int AS confirmed
-         FROM forms f LEFT JOIN sequences s ON s.id = f.sequence_id ORDER BY f.created_at`,
+         FROM forms f LEFT JOIN sequences s ON s.id = f.sequence_id ORDER BY f.list_position NULLS LAST, f.created_at`,
     );
+    const groups = await listGroups(ctx, "form");
     const body = `${pageHeader({ title: "フォーム", desc: "キャンペーン・メルマガごとに 1 つ作ります（シナリオを作ると対のフォームが自動でできます）。作ったばかりのフォームは「停止」なので、内容を整えたら「受付を始める」を押してください。" })}
 ${rows.length ? "" : emptyState({ icon: "file-input", title: "まだフォームがありません", text: "フォームを作ると、登録ページの URL と、他のサイトに貼れるフォームタグが手に入ります。" })}
-${rows.length ? `<div class="wrap"><table><tr><th>名前</th><th>受付</th><th>登録の確認</th><th>始めるシナリオ</th><th>登録</th><th>確定</th><th>確定率</th><th></th></tr>
-${rows
-  .map(
-    (r) => `<tr><td><a href="/admin/forms/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${r.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'}</td>
-<td>${r.double_optin ? "ダブル" : "シングル"}</td><td>${h(r.sequence ?? "なし（メルマガのみ）")}</td><td>${r.signups}</td><td>${r.confirmed}</td><td>${pct(r.confirmed, r.signups)}</td><td>${formToggle(r.id, r.active, "/admin/forms")}</td></tr>`,
-  )
-  .join("")}</table></div>` : ""}
+${groupCreator("form")}
+${groupedList({
+  kind: "form",
+  items: rows,
+  groups,
+  head: '<th>名前</th><th>受付</th><th>登録の確認</th><th class="col-wide">始めるシナリオ</th><th>登録</th><th>確定</th><th>確定率</th><th class="col-act"></th>',
+  row: (r) => `<td><a href="/admin/forms/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${r.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'}</td>
+<td>${r.double_optin ? "ダブル" : "シングル"}</td><td>${h(r.sequence ?? "なし（メルマガのみ）")}</td><td>${r.signups}</td><td>${r.confirmed}</td><td>${pct(r.confirmed, r.signups)}</td><td>${formToggle(r.id, r.active, "/admin/forms")}</td>`,
+})}
 <h2>メルマガだけのフォームを作る</h2><form method="post" action="/admin/forms" class="card"><p class="muted" style="margin:0">ステップメールなしで、メルマガの読者だけを集めるフォームです。特典つきのキャンペーンは「シナリオ」から作ると、フォームも一緒にできます。</p><div class="row">
 <div><label>名前</label><input type="text" name="name" required maxlength="80"></div>
-<div><label>識別名（任意。URL に使います。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div></div>
+<div><label>識別名（任意。URL に使います。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${groupField(groups)}</div>
 <div class="actions"><button type="submit">作る</button></div></form>`;
     return c.html(adminPage({ title: "フォーム", active: "/admin/forms", body, flash: flashFrom(c) }));
   });
@@ -604,9 +614,10 @@ ${rows
     const slug = slugOrAuto(one(f, "slug"), "f");
     if (!SLUG.test(slug)) return back(c, "/admin/forms", "err", "識別名は英小文字・数字・ハイフンで 2〜41 文字にしてください");
     const tagId = await ensureTag(ctx, one(f, "name") || slug, "src");
+    const groupId = await resolveGroupId(ctx, "form", one(f, "group_id"));
     const rows = await ctx.db.query<{ id: string }>(
-      "INSERT INTO forms (slug, name, tag_id, consent_text_version, active, double_optin) VALUES ($1, $2, $3, 'v1', false, false) ON CONFLICT (slug) DO NOTHING RETURNING id",
-      [slug, one(f, "name") || slug, tagId],
+      "INSERT INTO forms (slug, name, tag_id, consent_text_version, active, double_optin, group_id) VALUES ($1, $2, $3, 'v1', false, false, $4) ON CONFLICT (slug) DO NOTHING RETURNING id",
+      [slug, one(f, "name") || slug, tagId, groupId ?? null],
     );
     if (!rows[0]) return back(c, "/admin/forms", "err", "同じ識別名のフォームがあります");
     await audit(ctx.db, "form.create", rows[0].id);
