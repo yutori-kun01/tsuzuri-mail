@@ -4,7 +4,7 @@ LP から決済して、買った人に商品のメール（続きのメール�
 決済そのものは Stripe に任せる。カード情報はこのツールを一切通らない。
 
 ```
-LP（yutorikun.site など） ──▶ Stripe の決済画面（Payment Link / Checkout）
+LP（自分のサイト） ──▶ Stripe の決済画面（Payment Link / Checkout）
                                    │ 支払い完了
                                    ▼
                      Stripe ──Webhook──▶ /hooks/stripe（読者向けの Worker）
@@ -70,6 +70,6 @@ LP（yutorikun.site など） ──▶ Stripe の決済画面（Payment Link / 
 
 ## まだ無いもの
 
-- LP（販売ページ）。LP は `yutorikun.site` などに置き、Stripe の決済画面へのリンクを貼る。
+- LP（販売ページ）。LP は自分のサイト（ブログなど）に置き、Stripe の決済画面へのリンクを貼る。
 - 定期購入（サブスクリプション）の継続・解約の扱い。
 - 管理画面からの返金（返金は Stripe の画面で行い、通知で反映する）。
