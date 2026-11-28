@@ -351,6 +351,7 @@ dialog.modal .row{flex-direction:column;gap:0}dialog.modal .actions{justify-cont
 .fnav .count{margin-left:auto;font:500 12px/1 var(--font-sans);color:var(--ink-muted)}
 .fsave{position:sticky;bottom:0;background:var(--canvas);padding:var(--space-3) 0;border-top:1px solid var(--line);margin-top:var(--space-2)}
 @media (max-width:860px){.fedit{grid-template-columns:minmax(0,1fr)}.fnav{position:static;flex-direction:row;flex-wrap:wrap}}
+.impact{margin:0 0 var(--space-3);padding-left:1.2em;display:grid;gap:var(--space-1);font-size:13px}
 .flow-node small{color:var(--ink-muted);font-size:12px}
 .flow-num{flex:none;width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font:600 13px/1 var(--font-sans)}
 .flow-cond{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--warning)}
@@ -393,6 +394,27 @@ h2.with-icon .icon{color:var(--accent)}
   h1{font-size:var(--text-h3)}
   .toast{bottom:84px}
 }
+/* スマホ：表をカード型に組み替える（列の見出しは各値の左に出す。stackTables() が data-label を付ける） */
+@media (max-width:640px){
+  table.stack,table.stack>tbody,table.stack>thead{display:block}
+  table.stack tr.head-row,table.stack>thead{display:none}
+  table.stack tr{display:block;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--line)}
+  table.stack tr:last-child{border-bottom:0}
+  .wrap table.stack td,table.stack td{display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);padding:3px 0;border:0;white-space:normal;min-width:0;text-align:right;overflow-wrap:anywhere}
+  table.stack td::before{content:attr(data-label);flex:none;max-width:45%;color:var(--ink-muted);font:500 12px/18px var(--font-sans);text-align:left}
+  table.stack td.primary,table.stack td[data-label=""]{justify-content:flex-start;text-align:left}
+  table.stack td.primary::before,table.stack td[data-label=""]::before{content:none}
+  table.stack td.primary{font-size:15px;padding-bottom:var(--space-2)}
+  table.stack td.grip,table.stack td:empty{display:none}
+  table.stack tr:hover>td{background:transparent}
+  .wrap:has(table.stack){overflow-x:visible}
+  .page-head .head-actions{width:100%}
+  .row>*{min-width:100%}
+  .toolbar select,.toolbar .search{min-width:0;flex:1 1 140px}
+  .card{padding:var(--space-4)}
+  iframe.preview{height:520px}
+  .bulk-bar input[type=text]{min-width:0;flex:1 1 100%}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `;
 
@@ -421,6 +443,14 @@ function brandLink(id: string): string {
   return `<a class="brand" href="/admin">${logoMark(28, id)}<span class="wordmark">${h(BRAND.name)}</span></a>`;
 }
 
+
+/** スマホで表をカード型にするため、各セルに列の見出しを data-label として付ける（.no-stack の表は対象外） */
+const STACK_SCRIPT = `<script>(function(){document.querySelectorAll('.wrap>table:not(.no-stack)').forEach(function(t){
+var hr=null;t.querySelectorAll('tr').forEach(function(tr){if(!hr&&tr.querySelector('th')&&!tr.querySelector('td'))hr=tr});if(!hr)return;
+var labels=[];hr.querySelectorAll('th').forEach(function(th){var n=th.colSpan||1;for(var i=0;i<n;i++)labels.push(th.textContent.trim())});
+var first=labels.findIndex(function(l){return l!==''});hr.classList.add('head-row');t.classList.add('stack');
+t.querySelectorAll('tr').forEach(function(tr){if(tr===hr)return;var i=0;Array.prototype.forEach.call(tr.children,function(td){if(td.tagName!=='TD')return;td.setAttribute('data-label',td.colSpan>1?'':(labels[i]||''));if(i===first&&td.colSpan===1)td.classList.add('primary');i+=td.colSpan||1})})})})();</script>`;
+
 export function adminPage(o: PageOptions): string {
   const nav = NAV.map((item) =>
     typeof item === "string"
@@ -442,7 +472,7 @@ export function adminPage(o: PageOptions): string {
 <div class="layout"><nav class="sidebar" aria-label="管理メニュー">${brandLink("tz-d")}${nav}
 ${logout}</nav>
 <main>${o.body}</main></div>
-<nav class="tabbar" aria-label="主なメニュー">${tabbar}</nav>${toast}</body></html>`;
+<nav class="tabbar" aria-label="主なメニュー">${tabbar}</nav>${toast}${STACK_SCRIPT}</body></html>`;
 }
 
 /** ページの見出し（タイトル・説明・右上の操作・戻るリンク） */
@@ -469,6 +499,10 @@ document.querySelectorAll('[data-dialog=${JSON.stringify(o.id).slice(1, -1)}]').
 d.querySelectorAll('[data-close]').forEach(function(b){b.addEventListener('click',function(){d.close()})});
 d.addEventListener('click',function(e){if(e.target===d)d.close()});if(location.hash==='#'+d.id)open()})();</script>`;
 }
+
+/** HTML 形式の本文での置き換え文字の扱い（編集画面の注記） */
+export const HTML_PLACEHOLDER_NOTE =
+  '<p class="muted" style="margin:4px 0 0">HTML 形式では、登録済みの置き換え文字（%name%・%cancel%・置き換え文字の画面で作ったもの・%attr.キー%）だけを置き換えます。URL の %E3%81%82 や CSS の 100% などはそのまま送ります。</p>';
 
 /** 主ボタン風のリンク（アイコン付き） */
 export function linkButton(href: string, label: string, ic?: IconName, sub = false): string {

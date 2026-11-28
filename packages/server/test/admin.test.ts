@@ -376,10 +376,10 @@ describe("delivery log paging", () => {
       `INSERT INTO messages (idempotency_key, contact_id, channel_id, provider, kind, status)
        SELECT 'k' || ch.id, ch.contact_id, ch.id, 'memory', 'broadcast', 'sent' FROM channels ch`,
     );
-    const page = await (await get("/admin/logs?per=25", cookie)).text();
+    const page = await (await get("/admin/logs/messages?per=25", cookie)).text();
     expect(page).toContain("全 30 件中 1–25 件");
-    expect(page).toMatch(/href="\/admin\/logs\?per=25(&amp;|&)page=2"/);
-    const p2 = await (await get("/admin/logs?per=25&page=2", cookie)).text();
+    expect(page).toMatch(/href="\/admin\/logs\/messages\?per=25(&amp;|&)page=2"/);
+    const p2 = await (await get("/admin/logs/messages?per=25&page=2", cookie)).text();
     expect(p2).toContain("全 30 件中 26–30 件");
   });
 });

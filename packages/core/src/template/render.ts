@@ -240,7 +240,7 @@ function insertBeforeBodyEnd(doc: string, addition: string): string {
 export function renderEmail(input: RenderInput): RenderedEmail {
   const format = input.format ?? "markdown";
   const subject = substitute(input.subject, input.context).replace(/\s+/g, " ").trim();
-  const { text: withMarkers, values } = tokenize(input.body, input.context);
+  const { text: withMarkers, values } = tokenize(input.body, input.context, { html: format === "html" });
 
   // 1. 本文を HTML にする（置き換え文字は目印のまま）
   const rawHtml = format === "markdown" ? marked.parse(withMarkers, { async: false }) : withMarkers;

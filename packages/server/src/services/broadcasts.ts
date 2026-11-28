@@ -1,4 +1,4 @@
-import { validateTemplate } from "@tsuzuri/core";
+import { validateTemplate, type BodyFormat } from "@tsuzuri/core";
 import type { AppContext } from "../context.js";
 import type { Db } from "../db.js";
 import { compileSegment, type SegmentRule } from "../segments.js";
@@ -52,10 +52,16 @@ export class TemplateError extends Error {
 }
 
 /** 本文と件名の置き換え文字を検証する。 */
-export async function assertTemplatesValid(ctx: AppContext, ...templates: string[]): Promise<void> {
+/** 件名やフッターは文字列、本文は { text, format } で渡す（HTML の本文は登録済みの名前だけを置き換え文字として扱う） */
+export type TemplateInput = string | { text: string; format: BodyFormat };
+
+export async function assertTemplatesValid(ctx: AppContext, ...templates: TemplateInput[]): Promise<void> {
   const keys = await customVariableKeys(ctx.db);
   const unknown = new Set<string>();
-  for (const t of templates) for (const u of validateTemplate(t, keys).unknown) unknown.add(u);
+  for (const t of templates) {
+    const r = typeof t === "string" ? validateTemplate(t, keys) : validateTemplate(t.text, keys, { html: t.format === "html" });
+    for (const u of r.unknown) unknown.add(u);
+  }
   if (unknown.size > 0) throw new TemplateError([...unknown]);
 }
 

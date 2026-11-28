@@ -123,9 +123,9 @@ export async function syncContent(db: Db, root: string): Promise<SyncReport> {
   }
 
   const keys = (await db.query<{ key: string }>("SELECT key FROM custom_variables")).map((r) => r.key);
-  const check = (file: string, ...texts: string[]) => {
-    for (const t of texts) {
-      const r = validateTemplate(t, keys);
+  const check = (file: string, subject: string, body: string, format: "markdown" | "html" = "markdown") => {
+    for (const [t, html] of [[subject, false], [body, format === "html"]] as const) {
+      const r = validateTemplate(t, keys, { html });
       if (!r.ok) report.problems.push(`${file}: 未登録の置き換え文字 ${r.unknown.map((u) => `%${u}%`).join(" ")}`);
     }
   };
@@ -171,7 +171,7 @@ export async function syncContent(db: Db, root: string): Promise<SyncReport> {
       const { data, body } = parseFrontmatter(await readFile(join(dir, f), "utf8"));
       const subject = str(data.subject) ?? basename(f).replace(/\.(md|html)$/, "");
       const format = f.endsWith(".html") || data.format === "html" ? "html" : "markdown";
-      check(`sequences/${slug}/${f}`, subject, body);
+      check(`sequences/${slug}/${f}`, subject, body, format);
       const condition = (data.condition as StepCondition | undefined) ?? null;
       await db.query(
         `INSERT INTO sequence_steps (sequence_id, position, delay_days, send_time, delay_minutes, channel, condition, subject, body_markdown, body_format)
@@ -199,7 +199,7 @@ export async function syncContent(db: Db, root: string): Promise<SyncReport> {
     const [seq] = seqSlug ? await db.query<{ id: string }>("SELECT id FROM sequences WHERE slug = $1", [seqSlug]) : [];
     if (seqSlug && !seq) report.problems.push(`forms/${f}: シナリオ ${seqSlug} がありません`);
     const confirmSubject = str(data.confirm_subject) ?? "【確認】登録を完了してください";
-    if (body) check(`forms/${f}`, confirmSubject, body);
+    if (body) check(`forms/${f}`, confirmSubject, body, confirmFormat);
     if (body && !/%(confirm|登録確認)(\|[^%]*)?%/.test(body)) {
       report.problems.push(`forms/${f}: 確認メールの本文に %confirm% がありません`);
     }

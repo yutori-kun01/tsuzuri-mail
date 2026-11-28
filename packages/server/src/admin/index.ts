@@ -16,6 +16,8 @@ import { registerRoutes } from "./routes.js";
 import { registerGroups } from "./groups.js";
 import { registerReaderAdd } from "./readers-add.js";
 import { registerTopics } from "./topics.js";
+import { registerTags } from "./tags.js";
+import { logViewTabs, registerMailLogs } from "./logs.js";
 import { htmxScriptPath, icon } from "./icons.js";
 import { ADMIN_CSP, adminPage, avatar, delta, donut, emptyState, h, jst, kpiCard, legend, lineChart, linkButton, loginPage, pageHeader, pct, ring, statusPill, tabs, tagPicker, tierPill, TIERS } from "./ui.js";
 
@@ -248,28 +250,7 @@ ${notice}
   });
 
   // ---- タグ ----
-  app.get("/tags", async (c) => {
-    const ctx = await getCtx();
-    const rows = await ctx.db.query<{ id: string; name: string; total: number; active: number; forms: number; sequences: number }>(
-      `SELECT t.id, t.name,
-              (SELECT count(*) FROM contact_tags ct WHERE ct.tag_id = t.id)::int AS total,
-              (SELECT count(*) FROM contact_tags ct JOIN contacts co ON co.id = ct.contact_id WHERE ct.tag_id = t.id AND co.status = 'active')::int AS active,
-              (SELECT count(*) FROM forms f WHERE f.tag_id = t.id)::int AS forms,
-              (SELECT count(*) FROM sequences s WHERE s.done_tag_id = t.id)::int AS sequences
-         FROM tags t ORDER BY t.name`,
-    );
-    const table = rows.length
-      ? `<div class="wrap"><table><tr><th>タグ</th><th>付いている読者</th><th>うち配信中</th><th>使っている場所</th><th></th></tr>${rows
-          .map((r) => {
-            const used = [r.forms ? `フォーム ${r.forms}` : "", r.sequences ? `シナリオ完了 ${r.sequences}` : ""].filter(Boolean).join("・");
-            return `<tr><td><span class="pill">${icon("tag", 12)}${h(r.name)}</span></td><td>${r.total.toLocaleString("ja-JP")}</td><td>${r.active.toLocaleString("ja-JP")}</td>
-<td class="muted">${h(used || "—")}</td><td><a href="/admin/readers?tag=${encodeURIComponent(r.name)}">読者を見る</a></td></tr>`;
-          })
-          .join("")}</table></div>`
-      : emptyState({ icon: "tag", title: "まだタグがありません", text: "フォームから登録があると、フォーム名のタグが自動で付きます。読者の詳細画面から手で付けることもできます。" });
-    const body = `${pageHeader({ title: "タグ", desc: "読者に付いているタグの一覧です。一斉配信やシナリオの宛先の条件に使えます。タグの付け外しは読者の詳細画面から行います。" })}${table}`;
-    return c.html(adminPage({ title: "タグ", active: "/admin/tags", body, flash: flashFrom(c) }));
-  });
+  registerTags(app, getCtx);
 
   // ---- 読者 ----
   // /readers/new を /readers/:id より先に登録する
@@ -531,7 +512,8 @@ ${events
   });
 
   // ---- 配信ログ ----
-  app.get("/logs", async (c) => {
+  registerMailLogs(app, getCtx);
+  app.get("/logs/messages", async (c) => {
     const ctx = await getCtx();
     const STATUSES = ["queued", "sent", "delivered", "bounced", "complained", "failed", "skipped"];
     const status = STATUSES.includes(c.req.query("status") ?? "") ? c.req.query("status")! : "";
@@ -556,7 +538,7 @@ ${events
       origin: string | null;
     }>(
       `SELECT m.id, m.kind, m.status, m.error, m.attempts, m.queued_at, m.sent_at, ch.address, m.contact_id,
-              COALESCE(b.subject, st.subject, f.confirm_subject) AS title,
+              COALESCE(b.subject, st.subject, f.confirm_subject, m.subject) AS title,
               COALESCE(sq.name, f.name) AS origin
          FROM messages m JOIN channels ch ON ch.id = m.channel_id
          LEFT JOIN broadcasts b ON b.id = m.broadcast_id
@@ -576,7 +558,7 @@ ${events
       const pg = o.page ?? 1;
       if (pg > 1) q.set("page", String(pg));
       const qs = q.toString();
-      return `/admin/logs${qs ? `?${qs}` : ""}`;
+      return `/admin/logs/messages${qs ? `?${qs}` : ""}`;
     };
     const filters = tabs(
       ["", ...STATUSES].map((st) => ({
@@ -590,7 +572,8 @@ ${events
     const pager = `<div class="log-bar"><span class="muted">全 ${total.toLocaleString("ja-JP")} 件中 ${from.toLocaleString("ja-JP")}–${to.toLocaleString("ja-JP")} 件</span>
 <span class="log-per">表示件数 ${[25, 50, 100].map((n) => (n === per ? `<b>${n}</b>` : `<a href="${link({ per: n })}">${n}</a>`)).join("")}</span>
 <span class="log-pages">${cur > 1 ? `<a class="btn sub" href="${link({ page: cur - 1 })}">${icon("arrow-left", 14)}前へ</a>` : ""}<span class="muted">${cur} / ${pages} ページ</span>${cur < pages ? `<a class="btn sub" href="${link({ page: cur + 1 })}">次へ${icon("arrow-right", 14)}</a>` : ""}</span></div>`;
-    const body = `${pageHeader({ title: "配信ログ", desc: "新しい順に並びます。エラーがあるメールは「送信待ち」のまま自動で再試行され、3 回失敗すると「失敗」になります。" })}
+    const body = `${pageHeader({ title: "配信ログ", desc: "1 通ずつの送信記録です。エラーがあるメールは「送信待ち」のまま自動で再試行され、3 回失敗すると「失敗」になります。" })}
+${logViewTabs("messages")}
 <style>
 .log-bar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);margin:var(--space-3) 0}
 .log-per{display:inline-flex;gap:var(--space-2);align-items:center;font-size:13px;color:var(--ink-muted)}.log-per a,.log-per b{padding:2px 8px;border-radius:var(--radius-pill)}.log-per b{background:var(--accent-soft);color:var(--accent)}

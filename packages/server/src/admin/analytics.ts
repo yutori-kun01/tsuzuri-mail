@@ -96,12 +96,12 @@ export function analyticsPanel(a: SequenceAnalytics, days: number, seqId: string
     flagged: (s) => has(s, "unsub-warn") || has(s, "unsub-bad"),
   });
 
-  const table = `<section class="card"><h2 style="margin-top:0">数値の一覧</h2><div class="wrap"><table class="an-table"><tr><th>通</th><th>件名</th><th>送信</th><th>開封率（目安）</th><th>クリック率</th><th>配信停止</th><th>バウンス</th><th>苦情</th></tr>${a.steps
+  const table = `<section class="card"><h2 style="margin-top:0">数値の一覧</h2><div class="wrap"><table class="an-table"><tr><th>通</th><th>件名</th><th>送信</th><th>開封率（目安）</th><th>クリック率</th><th>配信停止</th><th>バウンス</th><th>苦情</th><th></th></tr>${a.steps
     .map(
-      (s) => `<tr><td>${s.position}</td><td>${h(s.subject || "（件名なし）")}</td><td>${s.sent}</td><td>${pct(s.opened, s.sent)}</td><td>${pct(s.clicked, s.sent)}</td><td>${s.unsubscribed}</td><td>${s.bounced}</td><td>${s.complained}</td></tr>`,
+      (s) => `<tr><td>${s.position}</td><td>${h(s.subject || "（件名なし）")}</td><td>${s.sent}</td><td>${pct(s.opened, s.sent)}</td><td>${pct(s.clicked, s.sent)}</td><td>${s.unsubscribed}</td><td>${s.bounced}</td><td>${s.complained}</td><td><a href="/admin/logs/mail/step/${h(s.id)}">リンク別・読者別</a></td></tr>`,
     )
     .join("")}</table></div>
-<p class="muted" style="margin:8px 0 0">開封は、メールアプリが自動で画像を読み込むと数えられないことや、逆に多く数えられることがあるため目安です。</p></section>`;
+<p class="muted" style="margin:8px 0 0">各通の「リンク別・読者別」で、リンクごとのクリック数や、開封・クリックした読者を確認できます（期間に関係なく全期間の集計）。開封は、メールアプリが自動で画像を読み込むと数えられないことや、逆に多く数えられることがあるため目安です。</p></section>`;
 
   const routes = a.routes.length
     ? `<section class="card"><h2 style="margin-top:0">登録経路別</h2><p class="muted" style="margin:0 0 8px">このシナリオのフォームから入った人を、登録経路ごとに数えています（<a href="/admin/routes">登録経路</a>）。</p>
