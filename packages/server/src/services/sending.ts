@@ -183,7 +183,8 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
   }
 
   const custom = await listCustomVariables(ctx.db);
-  const unknown = validateTemplate(`${content.subject}\n${content.body}`, custom.map((c) => c.key)).unknown;
+  const keys = custom.map((c) => c.key);
+  const unknown = [...new Set([...validateTemplate(content.subject, keys).unknown, ...validateTemplate(content.body, keys, { html: content.format === "html" }).unknown])];
   if (unknown.length > 0) {
     await finish(ctx, m.id, "failed", `unknown placeholders: ${unknown.join(",")}`);
     return "failed";
@@ -257,8 +258,9 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
       tags: { message_id: m.id, kind: m.kind },
     });
     await ctx.db.query(
-      "UPDATE messages SET status = 'sent', sent_at = $2, provider_message_id = $3, links = $4, link_count = $5 WHERE id = $1",
-      [m.id, ctx.now(), result.providerMessageId, JSON.stringify(rendered.links), rendered.links.length],
+      // 件名は置き換え前のひな形を残す（読者ごとの値は残さない。元のシナリオなどを消しても何のメールか分かるように）
+      "UPDATE messages SET status = 'sent', sent_at = $2, provider_message_id = $3, links = $4, link_count = $5, subject = $6 WHERE id = $1",
+      [m.id, ctx.now(), result.providerMessageId, JSON.stringify(rendered.links), rendered.links.length, content.subject],
     );
     return "sent";
   } catch (e) {

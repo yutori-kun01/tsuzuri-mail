@@ -50,3 +50,17 @@ export function compileSegment(rule: SegmentRule, params: unknown[]): string {
       throw new SegmentError("unknown rule");
   }
 }
+
+/** セグメントの中のタグ名を置き換える（rename：名前の変更・統合用）。変わらなければ同じものを返す */
+export function renameTagInSegment(rule: SegmentRule, from: string, to: string): SegmentRule {
+  if (rule.type === "group") return { ...rule, rules: rule.rules.map((r) => renameTagInSegment(r, from, to)) };
+  if (rule.type === "tag" && rule.tag === from) return { ...rule, tag: to };
+  return rule;
+}
+
+/** セグメントがこのタグ名を使っているか */
+export function segmentUsesTag(rule: SegmentRule | null | undefined, name: string): boolean {
+  if (!rule) return false;
+  if (rule.type === "group") return rule.rules.some((r) => segmentUsesTag(r, name));
+  return rule.type === "tag" && rule.tag === name;
+}

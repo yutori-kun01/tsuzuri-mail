@@ -73,13 +73,65 @@ export interface PlaceholderToken {
 /** %name% / %name|fallback% / %attr.x% を拾う。%% はエスケープ。 */
 const TOKEN_RE = /%%|%([^\s%|]{1,64})(?:\|([^%\n]{0,200}))?%/gu;
 
-export function scan(template: string): PlaceholderToken[] {
+/** 読者属性の置き換え文字として認める形（%attr.job% など） */
+const ATTR_NAME = /^attr\.[\p{L}\p{N}_-]{1,60}$/u;
+
+/**
+ * 読み取りの方式。
+ * html：HTML 形式の本文用。登録済みの名前（組み込み・独自・%attr.キー%）だけを置き換え文字として扱い、
+ *       それ以外の %...% はそのまま残す。URL の %E3%81%82 や CSS の width:100% と混ざらないようにするため。
+ *       %% も「%」に変えずそのまま残す（文字として %cancel% を出したいときは &#37;cancel&#37; と書く）。
+ */
+export interface ScanOptions {
+  html?: boolean;
+  /** html のとき、置き換え文字として認める独自の名前 */
+  customKeys?: Iterable<string>;
+}
+
+export function isKnownName(name: string, customKeys: ReadonlySet<string>): boolean {
+  return resolveBuiltin(name) !== undefined || customKeys.has(name) || ATTR_NAME.test(name);
+}
+
+/** 置き換え文字と %% を順に拾う（html では知らない名前を飛ばし、次の % から探し直す） */
+function* matches(template: string, opts: ScanOptions): Generator<{ m: RegExpExecArray; escape: boolean }> {
+  const re = new RegExp(TOKEN_RE.source, "gu");
+  const known = new Set(opts.customKeys ?? []);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(template)) !== null) {
+    if (m[0] === "%%") {
+      if (opts.html) {
+        re.lastIndex = m.index + 1;
+        continue;
+      }
+      yield { m, escape: true };
+      continue;
+    }
+    if (opts.html && !isKnownName(m[1]!, known)) {
+      re.lastIndex = m.index + 1;
+      continue;
+    }
+    yield { m, escape: false };
+  }
+}
+
+export function scan(template: string, opts: ScanOptions = {}): PlaceholderToken[] {
   const out: PlaceholderToken[] = [];
-  for (const m of template.matchAll(TOKEN_RE)) {
-    if (m[0] === "%%") continue;
+  for (const { m, escape } of matches(template, opts)) {
+    if (escape) continue;
     out.push({ raw: m[0], name: m[1]!, fallback: m[2], start: m.index, end: m.index + m[0].length });
   }
   return out;
+}
+
+/** 拾ったものを置き換えた文字列を作る */
+function replaceAll(template: string, opts: ScanOptions, fn: (t: PlaceholderToken) => string): string {
+  let out = "";
+  let last = 0;
+  for (const { m, escape } of matches(template, opts)) {
+    out += template.slice(last, m.index) + (escape ? "%" : fn({ raw: m[0], name: m[1]!, fallback: m[2], start: m.index, end: m.index + m[0].length }));
+    last = m.index + m[0].length;
+  }
+  return out + template.slice(last);
 }
 
 export interface ValidationResult {
@@ -88,10 +140,11 @@ export interface ValidationResult {
 }
 
 /** 未登録の置き換え文字を列挙する。保存・送信前に呼ぶ。 */
-export function validateTemplate(template: string, customKeys: Iterable<string>): ValidationResult {
+export function validateTemplate(template: string, customKeys: Iterable<string>, opts: { html?: boolean } = {}): ValidationResult {
   const custom = new Set(customKeys);
   const unknown = new Set<string>();
-  for (const t of scan(template)) {
+  // html では知らない名前は置き換え文字として扱わない（そのまま残す）ので、エラーにもならない
+  for (const t of scan(template, { html: opts.html ?? false, customKeys: custom })) {
     if (resolveBuiltin(t.name) || custom.has(t.name) || t.name.startsWith("attr.")) continue;
     unknown.add(t.name);
   }
@@ -136,23 +189,19 @@ export function resolve(token: PlaceholderToken, ctx: PlaceholderContext): Resol
  * 本文の HTML 化は render.ts が担当する。
  */
 export function substitute(template: string, ctx: PlaceholderContext): string {
-  return template.replace(TOKEN_RE, (whole) => {
-    if (whole === "%%") return "%";
-    const t = scan(whole)[0]!;
-    return resolve(t, ctx).value;
-  });
+  return replaceAll(template, {}, (t) => resolve(t, ctx).value);
 }
 
 /** 置き換え文字を目印に置き換え、目印→値の表を返す（Markdown 変換をまたぐため）。 */
 export function tokenize(
   template: string,
   ctx: PlaceholderContext,
+  opts: { html?: boolean } = {},
 ): { text: string; values: Map<string, ResolvedValue> } {
   const values = new Map<string, ResolvedValue>();
   let n = 0;
-  const text = template.replace(TOKEN_RE, (whole) => {
-    if (whole === "%%") return "%";
-    const t = scan(whole)[0]!;
+  const scanOpts: ScanOptions = { html: opts.html ?? false, customKeys: ctx.custom.map((c) => c.key) };
+  const text = replaceAll(template, scanOpts, (t) => {
     const marker = `TZPH${n++}X`;
     values.set(marker, resolve(t, ctx));
     return marker;

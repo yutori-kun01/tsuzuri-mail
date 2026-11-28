@@ -190,3 +190,42 @@ describe("footer templates", () => {
     expect(web.html).not.toContain("u/TOKEN");
   });
 });
+
+describe("HTML bodies keep URL encodings and CSS percentages", () => {
+  const footer = { senderName: "つづり通信", contact: "https://example.com/contact" };
+  const html = `<div style="width:100%;height:50%"><a href="https://example.com/search?q=%E3%81%82%E3%81%84&amp;r=%E3%81%82abc%E3%81%84">検索</a>
+<a href="%lp_url%">LP</a> %name%さん %attr.job% 50%% %unknown% <a href="%cancel%">停止</a></div>`;
+
+  it("only treats registered names as placeholders in html mode", () => {
+    expect(scan(html, { html: true, customKeys: ["lp_url"] }).map((t) => t.name)).toEqual(["lp_url", "name", "attr.job", "cancel"]);
+    expect(validateTemplate(html, ["lp_url"], { html: true }).ok).toBe(true);
+    // Markdown 側は今までどおり、知らない名前をエラーにする
+    expect(validateTemplate("%cancell%", [], {}).unknown).toEqual(["cancell"]);
+  });
+
+  it("finds a placeholder right after a percent-encoded byte", () => {
+    expect(scan("https://example.com/?a=%E3%name%", { html: true }).map((t) => t.name)).toEqual(["name"]);
+  });
+
+  it("renders without touching encoded URLs, CSS or unknown tokens", () => {
+    const r = renderEmail({ subject: "件名", body: html, format: "html", context: ctx, footer, unsubscribeUrl: "https://example.com/u/TOKEN" });
+    expect(r.html).toContain('style="width:100%;height:50%"');
+    expect(r.html).toContain("https://example.com/search?q=%E3%81%82%E3%81%84&amp;r=%E3%81%82abc%E3%81%84");
+    expect(r.html).toContain('href="https://example.com/lp"');
+    expect(r.html).toContain("山田さん 編集者 50%% %unknown%");
+    expect(r.html).toContain('href="https://example.com/u/TOKEN"');
+  });
+
+  it("tracks encoded URLs as they are", () => {
+    const r = renderEmail({
+      subject: "件名",
+      body: '<a href="https://example.com/?q=%E3%81%82">あ</a>',
+      format: "html",
+      context: ctx,
+      footer,
+      unsubscribeUrl: "https://example.com/u/TOKEN",
+      tracking: { clickUrl: (i) => `https://t.example.com/c/${i}` },
+    });
+    expect(r.links).toEqual([{ index: 0, url: "https://example.com/?q=%E3%81%82", isLast: true }]);
+  });
+});

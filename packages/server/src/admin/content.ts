@@ -17,7 +17,8 @@ import { listRoutes, PERIODS, periodStart } from "./routes.js";
 import { analyticsPanel } from "./analytics.js";
 import { groupCreator, groupedList, groupField, listGroups, resolveGroupId } from "./groups.js";
 import { sequenceAnalytics } from "../services/analytics.js";
-import { adminPage, emptyState, fromJstInput, h, linkButton, modal, pageHeader, pct, statusPill, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
+import { deleteForm, deleteSequence, formDeletionImpact, sequenceDeletionImpact } from "../services/deletion.js";
+import { adminPage, emptyState, HTML_PLACEHOLDER_NOTE, fromJstInput, h, linkButton, modal, pageHeader, pct, statusPill, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
 import type { IconName } from "./icons.js";
 
 /** シナリオ画面の区分（左のメニュー） */
@@ -154,7 +155,7 @@ ${timingFields(s, first)}
 <h2>メールの内容</h2>
 <label>件名</label><input type="text" name="subject" value="${h(s.subject)}" required maxlength="200">
 <div class="row"><div><label>本文の形式（Markdown は自動でレイアウト、HTML は書いたまま送る）</label><select name="format"><option value="markdown"${s.body_format !== "html" ? " selected" : ""}>Markdown</option><option value="html"${s.body_format === "html" ? " selected" : ""}>HTML</option></select></div></div>
-<label>本文</label><textarea name="body" required>${h(s.body_markdown)}</textarea>
+<label>本文</label><textarea name="body" required>${h(s.body_markdown)}</textarea>${HTML_PLACEHOLDER_NOTE}
 <details class="acc"${c ? " open" : ""}><summary>送る相手を絞る（任意。合わない人はこの通を飛ばして次の通へ進む）</summary><div class="acc-body">
 <label>このタグを<b>すべて</b>持つ人だけ</label>
 ${tagPicker({ name: "hasTags", tags, selected: c?.hasTags ?? [] })}
@@ -167,10 +168,25 @@ ${tagPicker({ name: "lacksTags", tags, selected: c?.lacksTags ?? [] })}
 <div class="actions"><button type="submit">保存する</button></div></form>`;
 }
 
+/** 作成画面の「登録した人に付けるタグ」（既定は名前と同じタグを作る。既存のタグも選べる） */
+function tagChoice(tags: { id: string; name: string }[]): string {
+  return `<div><label>登録した人に付けるタグ</label><select name="tag_choice"><option value="__new__">名前と同じタグを新しく作る</option>${
+    tags.length ? `<optgroup label="今あるタグを使う">${tags.map((t) => `<option value="${h(t.id)}">${h(t.name)}</option>`).join("")}</optgroup>` : ""
+  }<option value="">付けない</option></select></div>`;
+}
+
+/** tag_choice の値からタグの id を決める（__new__ は名前で作る、空は付けない、それ以外は実在する id だけ） */
+async function resolveTagChoice(ctx: AppContext, choice: string, name: string): Promise<string | null> {
+  if (choice === "__new__") return ensureTag(ctx, name, "src");
+  if (!choice) return null;
+  const [t] = await ctx.db.query<{ id: string }>("SELECT id FROM tags WHERE id::text = $1", [choice]);
+  return t?.id ?? null;
+}
+
 /** シナリオと対になる登録フォームを作る（受付は止めた状態。内容を整えてから始める） */
-async function createPairedForm(ctx: AppContext, sequenceId: string, slug: string, name: string): Promise<string | undefined> {
-  // 登録元のタグは、読みやすいようにシナリオ名そのもので作る（接頭辞は付けない）
-  const tagId = await ensureTag(ctx, name, "src");
+async function createPairedForm(ctx: AppContext, sequenceId: string, slug: string, name: string, tagChoiceValue = "__new__"): Promise<string | undefined> {
+  // 登録元のタグは、読みやすいようにシナリオ名そのもので作る（接頭辞は付けない）。既存のタグを選んだときはそれを使う
+  const tagId = await resolveTagChoice(ctx, tagChoiceValue, name);
   const [f] = await ctx.db.query<{ id: string }>(
     `INSERT INTO forms (slug, name, tag_id, sequence_id, consent_text_version, active, page_title, double_optin)
      VALUES ($1, $2, $3, $4, 'v1', false, $2, false) ON CONFLICT (slug) DO NOTHING RETURNING id`,
@@ -185,7 +201,7 @@ function flowDiagram(o: {
   seqId: string;
   forms: { id: string; name: string; active: boolean }[];
   entryRules: [string, string][];
-  steps: (StepRow & { sent: number; clicked: number })[];
+  steps: (StepRow & { sent: number; opened: number; clicked: number })[];
   doneTag: string | null;
   exitRules: [string, string][];
 }): string {
@@ -202,7 +218,7 @@ function flowDiagram(o: {
     const editUrl = `/admin/sequences/${h(o.seqId)}/steps/${h(st.id)}`;
     return `${arrow}<div class="flow-time">${icon("clock", 14)}${h(describeTiming(st, i === 0))}<span class="muted">（${h(approx[i] ?? "")}）</span></div>
 <div class="flow-node"><span class="flow-num">${i + 1}</span><div class="flow-body"><a href="${editUrl}"><b>${h(st.subject || "（件名なし）")}</b></a>${st.body_format === "html" ? ' <span class="pill">HTML</span>' : ""}${cond}
-<small>送信 ${st.sent}・クリック率 ${pct(st.clicked, st.sent)}</small></div>
+<small>送信 ${st.sent}・開封率 ${pct(st.opened, st.sent)}・クリック率 ${pct(st.clicked, st.sent)} ・ <a href="/admin/logs/mail/step/${h(st.id)}">${icon("chart-no-axes-column", 12)}レポート</a></small></div>
 <div class="flow-actions"><a class="btn sub" href="${editUrl}" title="編集">${icon("pencil", 14)}編集</a>
 <form method="post" action="${editUrl}/delete" onsubmit="return confirm('${i + 1} 通目「${h(st.subject || "")}」を削除しますか？')"><button class="sub icon-only" type="submit" title="削除" aria-label="削除">${icon("trash", 14)}</button></form></div></div>`;
   });
@@ -230,13 +246,14 @@ export function registerContent(app: Hono, getCtx: () => Promise<AppContext>, _o
          FROM sequences s ORDER BY s.list_position NULLS LAST, s.created_at`,
     );
     const groups = await listGroups(ctx, "sequence");
+    const allTags = await ctx.db.query<{ id: string; name: string }>("SELECT id, name FROM tags ORDER BY name");
     const createDialog = modal({
       id: "new-seq",
       title: "新しいシナリオ",
       body: `<form method="post" action="/admin/sequences">
 <p class="muted" style="margin-top:0">シナリオを作ると、登録フォームも一緒にできます（フォームから登録した人に、このシナリオが届きます）。作ったあと、1 通目から追加していきます。</p><div class="row">
 <div><label>名前（例：SEO チェックリスト特典）</label><input type="text" name="name" required maxlength="80"></div>
-<div><label>識別名（任意。フォームの URL になります。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${groupField(groups)}</div>
+<div><label>識別名（任意。フォームの URL になります。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${tagChoice(allTags)}${groupField(groups)}</div>
 <div class="actions"><button type="button" class="sub" data-close>やめる</button><button type="submit">${icon("plus", 16)}シナリオとフォームを作る</button></div></form>`,
     });
     const body = `${pageHeader({
@@ -271,7 +288,7 @@ ${createDialog}`;
     );
     if (!rows[0]) return back(c, "/admin/sequences", "err", "同じ識別名のシナリオがあります");
     await audit(ctx.db, "sequence.create", rows[0].id);
-    const formId = await createPairedForm(ctx, rows[0].id, slug, name);
+    const formId = await createPairedForm(ctx, rows[0].id, slug, name, f.tag_choice === undefined ? "__new__" : one(f, "tag_choice"));
     return back(
       c,
       `/admin/sequences/${rows[0].id}`,
@@ -288,9 +305,11 @@ ${createDialog}`;
       [id],
     );
     if (!s) return c.html(adminPage({ title: "シナリオ", active: "/admin/sequences", body: `${emptyState({ icon: "circle-x", title: "見つかりません", text: "削除されたか、URL が間違っている可能性があります。" })}` }), 404);
-    const steps = await ctx.db.query<StepRow & { sent: number; clicked: number }>(
+    const steps = await ctx.db.query<StepRow & { sent: number; opened: number; clicked: number }>(
       `SELECT st.id, st.position, st.delay_days, st.send_time::text AS send_time, st.delay_minutes, st.condition, st.subject, st.body_format,
               (SELECT count(*) FROM messages m WHERE m.step_id = st.id AND m.sent_at IS NOT NULL)::int AS sent,
+              (SELECT count(DISTINCT e.message_id) FROM events e JOIN messages m ON m.id = e.message_id
+                WHERE m.step_id = st.id AND e.type = 'open' AND NOT e.machine AND e.bot_reason IS NULL)::int AS opened,
               (SELECT count(DISTINCT e.message_id) FROM events e JOIN messages m ON m.id = e.message_id
                 WHERE m.step_id = st.id AND e.type = 'click' AND e.bot_reason IS NULL)::int AS clicked
          FROM sequence_steps st WHERE st.sequence_id = $1 ORDER BY st.position`,
@@ -388,7 +407,9 @@ ${stepEditor(s.id, newStepDefaults, steps.length === 0, tags).replace('<form met
 <label>配信の種類（読者が「受け取らない」を選んでいたら、このシナリオは届かない）</label>
 ${topicPicker({ topics, current: s.topic_id })}
 <div class="checks"><label class="check"><input type="checkbox" name="allow_reentry" value="1"${s.allow_reentry ? " checked" : ""}>完了した人も、もう一度登録したら最初から送る</label>
-<label class="check"><input type="checkbox" name="reengage" value="1"${s.purpose === "reengage" ? " checked" : ""}>休眠者の再確認シナリオとして使う</label></div>`,
+<label class="check"><input type="checkbox" name="reengage" value="1"${s.purpose === "reengage" ? " checked" : ""}>休眠者の再確認シナリオとして使う</label></div>
+<h2>削除</h2><p class="muted" style="margin:0 0 8px">シナリオとステップを削除します。送信済みの記録と同意の記録は残ります。</p>
+<button type="button" class="danger" data-dialog="del-seq">${icon("trash", 14)}このシナリオを削除…</button>`,
     );
     const senderPanel = panel(
       "sender",
@@ -397,7 +418,26 @@ ${topicPicker({ topics, current: s.topic_id })}
 ${senderFieldsHtml(ctx, s, true)}`,
     );
 
-    const body = `${pageHeader({ title: s.name, badge: ` ${statusPill(s.status)}`, back: ["/admin/sequences", "シナリオ"] })}
+    const impact = await sequenceDeletionImpact(ctx, s.id);
+    const delDialog = modal({
+      id: "del-seq",
+      title: "シナリオを削除",
+      body: `<form method="post" action="/admin/sequences/${h(s.id)}/delete">
+<p style="margin-top:0">「${h(s.name)}」を削除します。元に戻せません。</p>
+<ul class="impact">
+<li>進行中の読者 ${impact?.active ?? 0} 人への配信は止まります${impact?.queued ? `（送信待ち ${impact.queued} 通は送りません）` : ""}。</li>
+<li>送信済み ${impact?.sent ?? 0} 通の記録は配信ログに残りますが、このシナリオの分析画面は無くなります。</li>
+${impact?.rules.length ? `<li>このシナリオを使う自動化のルール ${impact.rules.length} 件（${impact.rules.map((r) => h(r.name)).join("・")}）も削除します。</li>` : ""}
+</ul>
+${
+  impact?.forms.length
+    ? `<label class="check"><input type="checkbox" name="with_forms" value="1">このシナリオを始めるフォーム ${impact.forms.length} 件（${impact.forms.map((f) => h(f.name)).join("・")}）も削除する</label>
+<p class="muted" style="margin:4px 0 0">チェックしなければ、フォームは残り「シナリオなし（メルマガのみ）」になります。</p>`
+    : ""
+}
+<div class="actions"><button type="button" class="sub" data-close>やめる</button><button type="submit" class="danger">${icon("trash", 14)}削除する</button></div></form>`,
+    });
+    const body = `${pageHeader({ title: s.name, badge: ` ${statusPill(s.status)}`, back: ["/admin/sequences", "シナリオ"] })}${delDialog}
 <section class="card status-bar"><div>${statusText}${warn}</div>${s.status === "archived" ? "" : toggle}</section>
 <div class="fedit"><nav class="fnav" aria-label="シナリオの設定">${nav}</nav>
 <div>${stepsPanel}${analyticsSection}${formsPanel}
@@ -459,6 +499,16 @@ document.querySelectorAll('[data-open]').forEach(function(a){a.addEventListener(
     return back(c, `/admin/sequences/${id}?tab=${tab}`, "ok", "保存しました");
   });
 
+  app.post("/sequences/:id/delete", async (c) => {
+    const ctx = await getCtx();
+    const id = c.req.param("id");
+    const withForms = one(await readForm(c), "with_forms") === "1";
+    const ok = await deleteSequence(ctx, id, withForms);
+    if (!ok) return back(c, "/admin/sequences", "err", "シナリオが見つかりません");
+    await audit(ctx.db, "sequence.delete", id, { withForms });
+    return back(c, "/admin/sequences", "ok", withForms ? "シナリオとフォームを削除しました" : "シナリオを削除しました");
+  });
+
   app.post("/sequences/:id/form", async (c) => {
     const ctx = await getCtx();
     const id = c.req.param("id");
@@ -485,7 +535,7 @@ document.querySelectorAll('[data-open]').forEach(function(a){a.addEventListener(
       delayDays = Math.min(365, Math.max(0, Math.round(Number(one(f, "delay_days")) || 0)));
     }
     try {
-      await assertTemplatesValid(ctx, subject, body);
+      await assertTemplatesValid(ctx, subject, { text: body, format: one(f, "format") === "html" ? "html" : "markdown" });
     } catch (e) {
       if (e instanceof TemplateError) return e.message;
       throw e;
@@ -575,6 +625,11 @@ ${stepEditor(id, st, st.is_first, await tagsWithCounts(ctx))}
   app.post("/sequences/:id/steps/:stepId/delete", async (c) => {
     const ctx = await getCtx();
     const { id, stepId } = c.req.param();
+    // まだ送っていないこの通は送らない（送信記録には件名を残す）
+    await ctx.db.query(
+      "UPDATE messages SET status = CASE WHEN status = 'queued' THEN 'skipped' ELSE status END, error = CASE WHEN status = 'queued' THEN 'step deleted' ELSE error END, subject = COALESCE(subject, (SELECT subject FROM sequence_steps WHERE id::text = $1)) WHERE step_id::text = $1",
+      [stepId],
+    );
     await ctx.db.query("DELETE FROM sequence_steps WHERE id::text = $1 AND sequence_id::text = $2", [stepId, id]);
     await audit(ctx.db, "step.delete", stepId);
     return back(c, `/admin/sequences/${id}`, "ok", "削除しました");
@@ -590,6 +645,7 @@ ${stepEditor(id, st, st.is_first, await tagsWithCounts(ctx))}
          FROM forms f LEFT JOIN sequences s ON s.id = f.sequence_id ORDER BY f.list_position NULLS LAST, f.created_at`,
     );
     const groups = await listGroups(ctx, "form");
+    const allTags = await ctx.db.query<{ id: string; name: string }>("SELECT id, name FROM tags ORDER BY name");
     const body = `${pageHeader({ title: "フォーム", desc: "キャンペーン・メルマガごとに 1 つ作ります（シナリオを作ると対のフォームが自動でできます）。作ったばかりのフォームは「停止」なので、内容を整えたら「受付を始める」を押してください。" })}
 ${rows.length ? "" : emptyState({ icon: "file-input", title: "まだフォームがありません", text: "フォームを作ると、登録ページの URL と、他のサイトに貼れるフォームタグが手に入ります。" })}
 ${groupCreator("form")}
@@ -603,7 +659,7 @@ ${groupedList({
 })}
 <h2>メルマガだけのフォームを作る</h2><form method="post" action="/admin/forms" class="card"><p class="muted" style="margin:0">ステップメールなしで、メルマガの読者だけを集めるフォームです。特典つきのキャンペーンは「シナリオ」から作ると、フォームも一緒にできます。</p><div class="row">
 <div><label>名前</label><input type="text" name="name" required maxlength="80"></div>
-<div><label>識別名（任意。URL に使います。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${groupField(groups)}</div>
+<div><label>識別名（任意。URL に使います。英小文字・数字・ハイフン。空なら自動）</label><input type="text" name="slug" pattern="[a-z0-9][a-z0-9-]{1,40}"></div>${tagChoice(allTags)}${groupField(groups)}</div>
 <div class="actions"><button type="submit">作る</button></div></form>`;
     return c.html(adminPage({ title: "フォーム", active: "/admin/forms", body, flash: flashFrom(c) }));
   });
@@ -613,7 +669,7 @@ ${groupedList({
     const f = await readForm(c);
     const slug = slugOrAuto(one(f, "slug"), "f");
     if (!SLUG.test(slug)) return back(c, "/admin/forms", "err", "識別名は英小文字・数字・ハイフンで 2〜41 文字にしてください");
-    const tagId = await ensureTag(ctx, one(f, "name") || slug, "src");
+    const tagId = await resolveTagChoice(ctx, f.tag_choice === undefined ? "__new__" : one(f, "tag_choice"), one(f, "name") || slug);
     const groupId = await resolveGroupId(ctx, "form", one(f, "group_id"));
     const rows = await ctx.db.query<{ id: string }>(
       "INSERT INTO forms (slug, name, tag_id, consent_text_version, active, double_optin, group_id) VALUES ($1, $2, $3, 'v1', false, false, $4) ON CONFLICT (slug) DO NOTHING RETURNING id",
@@ -697,13 +753,16 @@ ${groupedList({
       `<h2>基本設定</h2>
 <div class="row">${field("name", "名前（管理用）", f.name, "text", " required")}
 <div><label>登録後に始めるシナリオ</label><select name="sequence_id"><option value="">なし（メルマガのみ）</option>${seqs.map((s) => `<option value="${h(s.id)}"${f.sequence_id === s.id ? " selected" : ""}>${h(s.name)}</option>`).join("")}</select></div></div>
-<div class="row">${field("tag", "登録した人に付けるタグ", f.tag)}${field("lead_magnet_key", "特典ファイル（例 magnets/seo.pdf）", f.lead_magnet_key)}${field("consent_text_version", "同意文言の版", f.consent_text_version, "text", " required")}</div>
+<div class="row"><div><label>登録した人に付けるタグ（一覧から選ぶか新しく入力。空なら付けない）</label><input type="text" name="tag" value="${h(f.tag)}" list="form-tag-list" maxlength="60">
+<datalist id="form-tag-list">${(await ctx.db.query<{ name: string }>("SELECT name FROM tags ORDER BY name")).map((t) => `<option value="${h(t.name)}"></option>`).join("")}</datalist></div>${field("lead_magnet_key", "特典ファイル（例 magnets/seo.pdf）", f.lead_magnet_key)}${field("consent_text_version", "同意文言の版", f.consent_text_version, "text", " required")}</div>
 <h2>登録の確認</h2>
 <div class="optin-choice"><label class="check"><input type="radio" name="double_optin" value="0"${f.double_optin ? "" : " checked"}><span><b>シングルオプトイン</b>：フォームを送信した時点で登録完了（確認メールは送らず、すぐ 1 通目から届く）</span></label>
 <label class="check"><input type="radio" name="double_optin" value="1"${f.double_optin ? " checked" : ""}><span><b>ダブルオプトイン</b>：届いた確認メールのリンクを押して登録完了（いたずら登録や打ち間違いを防げる）</span></label></div>
 <p class="muted" style="margin:4px 0 0">どちらでも同意の記録（日時・フォーム・同意文言の版）は残ります。シングルオプトインでも、配信停止した人のアドレスで登録されたときだけは、本人確認のため確認メールを送ります。</p>
 <h2>受付期間</h2><p class="muted" style="margin:0">空なら期間の制限なし（「受付中」の間はいつでも登録できます）。日本時間で入力します。</p>
-<div class="row">${field("accept_from", "受付開始", toJstInput(f.accept_from), "datetime-local")}${field("accept_until", "受付終了", toJstInput(f.accept_until), "datetime-local")}</div>`,
+<div class="row">${field("accept_from", "受付開始", toJstInput(f.accept_from), "datetime-local")}${field("accept_until", "受付終了", toJstInput(f.accept_until), "datetime-local")}</div>
+<h2>削除</h2><p class="muted" style="margin:0 0 8px">フォームを削除します。登録済みの読者と同意の記録は残ります。</p>
+<button type="button" class="danger" data-dialog="del-form">${icon("trash", 14)}このフォームを削除…</button>`,
     );
 
     const typeOptions = (sel: FieldType) => FIELD_TYPES.map((t) => `<option value="${t}"${t === sel ? " selected" : ""}>${FIELD_TYPE_LABELS[t]}</option>`).join("");
@@ -724,7 +783,7 @@ ${groupedList({
       "fields",
       `<h2>入力項目</h2>
 <p class="muted" style="margin:0 0 12px">上から順にフォームに並びます。左のつまみをドラッグして並べ替えられます。入力された値は読者の属性に保存され、本文やセグメントで %attr.キー% として使えます。</p>
-<input type="hidden" name="fields_present" value="1"><div class="wrap"><table class="fields-table"><colgroup><col style="width:32px"><col><col style="width:136px"><col style="width:80px"><col style="width:96px"><col style="width:26%"><col style="width:44px"></colgroup>
+<input type="hidden" name="fields_present" value="1"><div class="wrap"><table class="fields-table no-stack"><colgroup><col style="width:32px"><col><col style="width:136px"><col style="width:80px"><col style="width:96px"><col style="width:26%"><col style="width:44px"></colgroup>
 <thead><tr><th></th><th>名称</th><th>入力形式</th><th>必須</th><th>フォームで使う</th><th>初期値・選択肢</th><th></th></tr></thead>
 <tbody><tr class="fixed"><td>${icon("lock", 16)}</td><td>メールアドレス<div class="muted">固定の項目</div></td><td>メール</td><td>必須</td><td>使う</td><td class="muted">変更できません</td><td></td></tr></tbody>
 <tbody id="field-rows">${fields.map((x) => fieldRow(x)).join("")}</tbody></table></div>
@@ -754,7 +813,7 @@ ${f.double_optin ? "" : `<p class="muted" style="margin:0">シングルオプト
 ${f.double_optin ? "" : `<p class="flash">${icon("info", 16)}このフォームはシングルオプトインなので、確認メールは通常送りません（配信停止した人が登録し直したときだけ使います）。</p>`}
 <div class="row">${field("confirm_subject", "件名", f.confirm_subject, "text", " required")}
 <div><label>形式</label><select name="confirm_format"><option value="markdown"${f.confirm_body_format !== "html" ? " selected" : ""}>Markdown</option><option value="html"${f.confirm_body_format === "html" ? " selected" : ""}>HTML</option></select></div></div>
-<label>本文（%confirm% が必須）</label><textarea name="confirm_body">${h(f.confirm_body_markdown)}</textarea>`,
+<label>本文（%confirm% が必須）</label><textarea name="confirm_body">${h(f.confirm_body_markdown)}</textarea>${HTML_PLACEHOLDER_NOTE}`,
     );
 
     const embedPanel = panel(
@@ -768,7 +827,21 @@ ${routeList}
 <label>フォームのページのプレビュー（保存した内容）</label><iframe class="preview" sandbox srcdoc="${h(preview)}" style="height:520px"></iframe>`,
     );
 
-    const body = `${pageHeader({ title: f.name, badge: ` ${f.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'}`, back: ["/admin/forms", "フォーム"] })}
+    const impact = await formDeletionImpact(ctx, f.id);
+    const delDialog = modal({
+      id: "del-form",
+      title: "フォームを削除",
+      body: `<form method="post" action="/admin/forms/${h(f.id)}/delete">
+<p style="margin-top:0">「${h(f.name)}」を削除します。元に戻せません。</p>
+<ul class="impact">
+<li>このフォームの URL と、他のページに貼ったフォームタグは使えなくなります。</li>
+<li>登録 ${impact?.signups ?? 0} 件の同意の記録は残ります（どのフォームだったかも記録に残します）。読者も消えません。</li>
+${impact?.pending ? `<li>確認メールのリンクをまだ押していない ${impact.pending} 件は、登録を完了できなくなります。</li>` : ""}
+${impact?.rules.length ? `<li>このフォームを使う自動化のルール ${impact.rules.length} 件（${impact.rules.map((r) => h(r.name)).join("・")}）も削除します。</li>` : ""}
+</ul>
+<div class="actions"><button type="button" class="sub" data-close>やめる</button><button type="submit" class="danger">${icon("trash", 14)}削除する</button></div></form>`,
+    });
+    const body = `${pageHeader({ title: f.name, badge: ` ${f.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'}`, back: ["/admin/forms", "フォーム"] })}${delDialog}
 <style>
 .fields-table{min-width:700px;table-layout:fixed}
 .fields-table td,.fields-table th{white-space:normal;vertical-align:top;padding:var(--space-2)}
@@ -822,7 +895,7 @@ document.querySelectorAll('[data-copy]').forEach(function(b){b.addEventListener(
     const confirmBody = typeof f.confirm_body === "string" ? f.confirm_body : one(f, "confirm_body");
     if (!/%(confirm|登録確認)(\|[^%]*)?%/.test(confirmBody)) return back(c, path, "err", "確認メールの本文に %confirm% を入れてください");
     try {
-      await assertTemplatesValid(ctx, one(f, "confirm_subject"), confirmBody);
+      await assertTemplatesValid(ctx, one(f, "confirm_subject"), { text: confirmBody, format: one(f, "confirm_format") === "html" ? "html" : "markdown" });
     } catch (e) {
       if (e instanceof TemplateError) return back(c, path, "err", e.message);
       throw e;
@@ -881,6 +954,15 @@ document.querySelectorAll('[data-copy]').forEach(function(b){b.addEventListener(
     );
     await audit(ctx.db, "form.update", id, { doubleOptin: one(f, "double_optin") || undefined });
     return back(c, path, "ok", "保存しました");
+  });
+
+  app.post("/forms/:id/delete", async (c) => {
+    const ctx = await getCtx();
+    const id = c.req.param("id");
+    const ok = await deleteForm(ctx, id);
+    if (!ok) return back(c, "/admin/forms", "err", "フォームが見つかりません");
+    await audit(ctx.db, "form.delete", id);
+    return back(c, "/admin/forms", "ok", "フォームを削除しました");
   });
 
   app.post("/forms/:id/active", async (c) => {

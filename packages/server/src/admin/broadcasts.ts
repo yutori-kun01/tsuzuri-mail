@@ -4,12 +4,13 @@ import type { AppContext } from "../context.js";
 import type { SegmentRule } from "../segments.js";
 import { abStats, assertTemplatesValid, countRecipients, isAbTest, TemplateError } from "../services/broadcasts.js";
 import { listTopics, type Topic } from "../services/preferences.js";
+import { mailStats } from "../services/reports.js";
 import { audit } from "./auth.js";
 import { back, flashFrom, many, one, previewResponse, readForm, readSenderFields, renderSample, senderFieldsHtml, sendTest, tagsFrom, tagsWithCounts, type Form } from "./common.js";
 import { listFooters, type Footer } from "../services/footers.js";
 import { footerSelect } from "./footers.js";
 import { icon, type IconName } from "./icons.js";
-import { adminPage, emptyState, fromJstInput, h, jst, linkButton, pageHeader, pct, statusPill, tabs, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
+import { adminPage, emptyState, HTML_PLACEHOLDER_NOTE, fromJstInput, h, jst, linkButton, pageHeader, pct, statusPill, tabs, tagPicker, TIERS, toJstInput, topicPicker } from "./ui.js";
 
 interface BroadcastRow {
   id: string;
@@ -114,7 +115,7 @@ function editor(b: Partial<BroadcastRow>, seg: SimpleSegment, count: number | un
 <option value="markdown"${b.body_format !== "html" ? " selected" : ""}>Markdown（自動でレイアウト）</option>
 <option value="html"${b.body_format === "html" ? " selected" : ""}>HTML（書いたまま送る）</option></select></div>
 <div>${footerSelect(o.footers, b.footer_id, dis)}</div></div>
-<label>本文</label><textarea name="body" required${dis}>${h(b.body_markdown)}</textarea></div></section>
+<label>本文</label><textarea name="body" required${dis}>${h(b.body_markdown)}</textarea>${HTML_PLACEHOLDER_NOTE}</div></section>
 
 <section class="sect"><div class="sect-head">${head(2, "users", "宛先")}</div><div class="sect-body">
 <label>配信の種類（読者が「受け取らない」を選んだ種類は届かない）</label>
@@ -180,7 +181,7 @@ async function liveFromForm(ctx: AppContext, f: Form): Promise<string> {
   const count = await countRecipients(ctx, toSegment(simple), important, topicId);
   const description = describe(simple, important);
   try {
-    await assertTemplatesValid(ctx, subject, bodyText);
+    await assertTemplatesValid(ctx, subject, { text: bodyText, format });
     const r = await renderSample(ctx, subject, bodyText || " ", format, one(f, "footer_id") || null);
     return livePanel({ subject: r.subject, html: r.html, count, description });
   } catch (e) {
@@ -238,12 +239,12 @@ export function registerBroadcasts(app: Hono, getCtx: () => Promise<AppContext>)
       ["canceled", "取り消し", n("canceled")],
     ] as const;
     const table = rows.length
-      ? `<div class="wrap"><table><tr><th>件名</th><th>状態</th><th>送信日時</th><th>宛先</th><th>配達</th><th>開封</th><th>クリック</th><th>バウンス</th><th>苦情</th></tr>
+      ? `<div class="wrap"><table><tr><th>件名</th><th>状態</th><th>送信日時</th><th>宛先</th><th>配達</th><th>開封</th><th>クリック</th><th>バウンス</th><th>苦情</th><th></th></tr>
 ${rows
   .map(
     (r) => `<tr><td><a href="/admin/broadcasts/${h(r.id)}">${h(r.subject || "（件名なし）")}</a></td><td>${statusPill(r.status)}</td>
 <td>${h(jst(r.scheduled_at))}</td><td>${r.recipients}</td><td>${pct(r.delivered, r.recipients)}</td><td>${pct(r.opened, r.recipients)}</td>
-<td>${pct(r.clicked, r.recipients)}</td><td>${r.bounced}</td><td>${r.complained}</td></tr>`,
+<td>${pct(r.clicked, r.recipients)}</td><td>${r.bounced}</td><td>${r.complained}</td><td>${r.recipients ? `<a href="/admin/logs/mail/broadcast/${h(r.id)}">レポート</a>` : ""}</td></tr>`,
   )
   .join("")}</table></div>
 <p class="muted" style="margin-top:12px">開封率は機械開封（Apple のプライバシー保護など）を除いた目安です。クリック率の方が信頼できます。</p>`
@@ -273,7 +274,7 @@ ${table}`;
     const format: BodyFormat = one(f, "format") === "html" ? "html" : "markdown";
     if (!subject || !bodyText.trim()) return { error: "件名と本文を入力してください" };
     try {
-      await assertTemplatesValid(ctx, subject, bodyText);
+      await assertTemplatesValid(ctx, subject, { text: bodyText, format });
     } catch (e) {
       if (e instanceof TemplateError) return { error: e.message };
       throw e;
@@ -383,6 +384,11 @@ ${table}`;
         w?.last ? `（最後は ${h(jst(w.last))} ごろ）` : ""
       }。</p></div>`;
     }
+    if (["sending", "sent", "testing"].includes(b.status)) {
+      const st = await mailStats(ctx, "broadcast", b.id);
+      results += `<section class="card"><div class="card-head"><h2>${icon("chart-no-axes-column", 16)} 結果</h2><a href="/admin/logs/mail/broadcast/${h(b.id)}">リンク別・読者別のレポート →</a></div>
+<div class="grid kpi"><div class="stat"><b>${st.sent.toLocaleString("ja-JP")}</b><span>送信</span></div><div class="stat"><b>${pct(st.opened, st.sent)}</b><span>開封率（目安）</span></div><div class="stat"><b>${pct(st.clicked, st.sent)}</b><span>クリック率</span></div></div></section>`;
+    }
     const initial = livePanel({ subject: sample.subject, html: sample.html, ...(count !== undefined ? { count } : {}), description: describe(seg, b.important) });
     const body = `${pageHeader({ title: b.subject || "一斉配信", badge: ` ${statusPill(b.status)}`, back: ["/admin/broadcasts", "一斉配信"], desc: readonly ? "送信済み・予約中の配信は編集できません。" : "プレビューはサンプルの読者「山田」さん宛てです。" })}
 <div class="split"><div>${controls}${results}${editor(b, seg, count, readonly, await editorOptions(ctx))}</div>
@@ -435,7 +441,7 @@ ${table}`;
     const [b] = await ctx.db.query<BroadcastRow>("SELECT * FROM broadcasts WHERE id::text = $1", [id]);
     if (!b) return c.text("not found", 404);
     try {
-      await assertTemplatesValid(ctx, b.subject ?? "", b.body_markdown);
+      await assertTemplatesValid(ctx, b.subject ?? "", { text: b.body_markdown, format: b.body_format });
     } catch (e) {
       if (e instanceof TemplateError) return back(c, `/admin/broadcasts/${id}`, "err", e.message);
       throw e;

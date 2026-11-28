@@ -19,6 +19,14 @@ const esc = (v: string | number) => String(v).replace(/&/g, "&amp;").replace(/"/
 /** 管理画面で使うアイコンの名前（存在しない名前は型で弾く） */
 export type IconName =
   | "house"
+  | "key-round"
+  | "download"
+  | "hard-drive-download"
+  | "calculator"
+  | "fingerprint-pattern"
+  | "smartphone"
+  | "qr-code"
+  | "monitor"
   | "send"
   | "workflow"
   | "scroll-text"

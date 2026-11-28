@@ -1,6 +1,7 @@
 import { escapeHtml } from "@tsuzuri/core";
 import { ADMIN_FONTS_LINK, BRAND, FAVICON_LINK, logoMark, TOKENS_CSS } from "../ui/theme.js";
 import { icon, type IconName } from "./icons.js";
+import { WEBAUTHN_CLIENT } from "./webauthn-client.js";
 
 /** HTML に埋め込む値は必ずこれを通す */
 export const h = (v: unknown): string => escapeHtml(v === null || v === undefined ? "" : String(v));
@@ -27,6 +28,9 @@ const NAV: (string | [string, string, IconName])[] = [
   ["/admin/variables", "置き換え文字", "braces"],
   ["/admin/footers", "フッター", "panel-bottom"],
   ["/admin/domains", "送信ドメイン", "globe"],
+  ["/admin/passkeys", "パスキー", "key-round"],
+  ["/admin/costs", "料金の目安", "calculator"],
+  ["/admin/transfer", "データの引き継ぎ", "hard-drive-download"],
   ["/admin/settings", "設定", "settings"],
 ];
 
@@ -351,6 +355,7 @@ dialog.modal .row{flex-direction:column;gap:0}dialog.modal .actions{justify-cont
 .fnav .count{margin-left:auto;font:500 12px/1 var(--font-sans);color:var(--ink-muted)}
 .fsave{position:sticky;bottom:0;background:var(--canvas);padding:var(--space-3) 0;border-top:1px solid var(--line);margin-top:var(--space-2)}
 @media (max-width:860px){.fedit{grid-template-columns:minmax(0,1fr)}.fnav{position:static;flex-direction:row;flex-wrap:wrap}}
+.impact{margin:0 0 var(--space-3);padding-left:1.2em;display:grid;gap:var(--space-1);font-size:13px}
 .flow-node small{color:var(--ink-muted);font-size:12px}
 .flow-num{flex:none;width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font:600 13px/1 var(--font-sans)}
 .flow-cond{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--warning)}
@@ -393,6 +398,27 @@ h2.with-icon .icon{color:var(--accent)}
   h1{font-size:var(--text-h3)}
   .toast{bottom:84px}
 }
+/* スマホ：表をカード型に組み替える（列の見出しは各値の左に出す。stackTables() が data-label を付ける） */
+@media (max-width:640px){
+  table.stack,table.stack>tbody,table.stack>thead{display:block}
+  table.stack tr.head-row,table.stack>thead{display:none}
+  table.stack tr{display:block;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--line)}
+  table.stack tr:last-child{border-bottom:0}
+  .wrap table.stack td,table.stack td{display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);padding:3px 0;border:0;white-space:normal;min-width:0;text-align:right;overflow-wrap:anywhere}
+  table.stack td::before{content:attr(data-label);flex:none;max-width:45%;color:var(--ink-muted);font:500 12px/18px var(--font-sans);text-align:left}
+  table.stack td.primary,table.stack td[data-label=""]{justify-content:flex-start;text-align:left}
+  table.stack td.primary::before,table.stack td[data-label=""]::before{content:none}
+  table.stack td.primary{font-size:15px;padding-bottom:var(--space-2)}
+  table.stack td.grip,table.stack td:empty{display:none}
+  table.stack tr:hover>td{background:transparent}
+  .wrap:has(table.stack){overflow-x:visible}
+  .page-head .head-actions{width:100%}
+  .row>*{min-width:100%}
+  .toolbar select,.toolbar .search{min-width:0;flex:1 1 140px}
+  .card{padding:var(--space-4)}
+  iframe.preview{height:520px}
+  .bulk-bar input[type=text]{min-width:0;flex:1 1 100%}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `;
 
@@ -414,12 +440,20 @@ const TABBAR: [string, string, IconName, string[]][] = [
   ["/admin", "ホーム", "house", ["/admin"]],
   ["/admin/broadcasts", "配信", "send", ["/admin/broadcasts", "/admin/sequences", "/admin/automations", "/admin/logs"]],
   ["/admin/readers", "読者", "users", ["/admin/readers", "/admin/forms", "/admin/routes", "/admin/topics", "/admin/tags"]],
-  ["/admin/settings", "設定", "settings", ["/admin/variables", "/admin/footers", "/admin/domains", "/admin/settings"]],
+  ["/admin/settings", "設定", "settings", ["/admin/variables", "/admin/footers", "/admin/domains", "/admin/passkeys", "/admin/transfer", "/admin/costs", "/admin/settings"]],
 ];
 
 function brandLink(id: string): string {
   return `<a class="brand" href="/admin">${logoMark(28, id)}<span class="wordmark">${h(BRAND.name)}</span></a>`;
 }
+
+
+/** スマホで表をカード型にするため、各セルに列の見出しを data-label として付ける（.no-stack の表は対象外） */
+const STACK_SCRIPT = `<script>(function(){document.querySelectorAll('.wrap>table:not(.no-stack)').forEach(function(t){
+var hr=null;t.querySelectorAll('tr').forEach(function(tr){if(!hr&&tr.querySelector('th')&&!tr.querySelector('td'))hr=tr});if(!hr)return;
+var labels=[];hr.querySelectorAll('th').forEach(function(th){var n=th.colSpan||1;for(var i=0;i<n;i++)labels.push(th.textContent.trim())});
+var first=labels.findIndex(function(l){return l!==''});hr.classList.add('head-row');t.classList.add('stack');
+t.querySelectorAll('tr').forEach(function(tr){if(tr===hr)return;var i=0;Array.prototype.forEach.call(tr.children,function(td){if(td.tagName!=='TD')return;td.setAttribute('data-label',td.colSpan>1?'':(labels[i]||''));if(i===first&&td.colSpan===1)td.classList.add('primary');i+=td.colSpan||1})})})})();</script>`;
 
 export function adminPage(o: PageOptions): string {
   const nav = NAV.map((item) =>
@@ -442,7 +476,7 @@ export function adminPage(o: PageOptions): string {
 <div class="layout"><nav class="sidebar" aria-label="管理メニュー">${brandLink("tz-d")}${nav}
 ${logout}</nav>
 <main>${o.body}</main></div>
-<nav class="tabbar" aria-label="主なメニュー">${tabbar}</nav>${toast}</body></html>`;
+<nav class="tabbar" aria-label="主なメニュー">${tabbar}</nav>${toast}${STACK_SCRIPT}</body></html>`;
 }
 
 /** ページの見出し（タイトル・説明・右上の操作・戻るリンク） */
@@ -469,6 +503,10 @@ document.querySelectorAll('[data-dialog=${JSON.stringify(o.id).slice(1, -1)}]').
 d.querySelectorAll('[data-close]').forEach(function(b){b.addEventListener('click',function(){d.close()})});
 d.addEventListener('click',function(e){if(e.target===d)d.close()});if(location.hash==='#'+d.id)open()})();</script>`;
 }
+
+/** HTML 形式の本文での置き換え文字の扱い（編集画面の注記） */
+export const HTML_PLACEHOLDER_NOTE =
+  '<p class="muted" style="margin:4px 0 0">HTML 形式では、登録済みの置き換え文字（%name%・%cancel%・置き換え文字の画面で作ったもの・%attr.キー%）だけを置き換えます。URL の %E3%81%82 や CSS の 100% などはそのまま送ります。</p>';
 
 /** 主ボタン風のリンク（アイコン付き） */
 export function linkButton(href: string, label: string, ic?: IconName, sub = false): string {
@@ -656,15 +694,33 @@ export function tabs(items: { href: string; label: string; count?: number; curre
     .join("")}</nav>`;
 }
 
-export function loginPage(error?: string): string {
+/** hasPasskeys が false（まだ登録が無い）なら、パスワードの欄を最初から開いておく */
+export function loginPage(error?: string, hasPasskeys = false): string {
   return `${head("ログイン")}
 <body><div class="login"><div class="card"><div class="login-brand">${logoMark(48, "tz-l")}<div><div class="wordmark">${h(BRAND.name)}</div><p class="tagline">${h(BRAND.tagline)}</p></div></div>
 <p class="promise">${h(BRAND.promise)}</p>
 ${error ? `<div class="flash error" role="alert">${icon("circle-x", 16)}${h(error)}</div>` : ""}
+<div class="pk-login">
+<button type="button" data-pk-login="any" style="width:100%">${icon("fingerprint-pattern", 18)}パスキーでログイン</button>
+<button type="button" class="sub" data-pk-login="hybrid" style="width:100%">${icon("qr-code", 18)}スマホで QR コードを読み取ってログイン</button>
+<p class="flash error" id="pk-status" role="alert"></p>
+</div>
+<details class="pw-login"${error || !hasPasskeys ? " open" : ""}><summary>パスワードと認証アプリでログイン</summary>
 <form method="post" action="/admin/login">
 <label for="password">パスワード</label><input id="password" name="password" type="password" autocomplete="current-password" required>
 <label for="code">認証アプリの 6 桁のコード</label><input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required>
-<div class="actions"><button type="submit" style="width:100%">ログイン</button></div></form></div></div></body></html>`;
+<div class="actions"><button type="submit" style="width:100%">ログイン</button></div></form></details></div></div>
+<style>.pk-login{display:grid;gap:var(--space-2);margin-top:var(--space-4)}.pk-login button{min-height:44px;height:auto;gap:var(--space-2);white-space:normal;text-align:center}@media (max-width:480px){.login .card{padding:var(--space-6) var(--space-4)}}#pk-status:empty{display:none}#pk-status{margin:0}
+.pw-login{margin-top:var(--space-4);border-top:1px solid var(--line);padding-top:var(--space-2)}.pw-login>summary{font-size:13px;color:var(--ink-muted)}</style>
+<script>(function(){${WEBAUTHN_CLIENT}
+var st=document.getElementById('pk-status');
+document.querySelectorAll('[data-pk-login]').forEach(function(b){b.addEventListener('click',function(){
+st.textContent='';if(!window.PublicKeyCredential){st.textContent='このブラウザはパスキーに対応していません。パスワードでログインしてください。';return}
+var hybrid=b.dataset.pkLogin==='hybrid';b.disabled=true;
+tzPost('/admin/passkey/login/options').then(function(o){var pk={challenge:tzBuf(o.challenge),rpId:o.rpId,timeout:o.timeout,userVerification:o.userVerification,allowCredentials:[]};if(hybrid)pk.hints=['hybrid'];return navigator.credentials.get({publicKey:pk})})
+.then(function(cr){var r=cr.response;return tzPost('/admin/passkey/login',{id:cr.id,rawId:tzB64(cr.rawId),type:cr.type,response:{clientDataJSON:tzB64(r.clientDataJSON),authenticatorData:tzB64(r.authenticatorData),signature:tzB64(r.signature),userHandle:r.userHandle?tzB64(r.userHandle):null}})})
+.then(function(j){location.href=j.redirect||'/admin'}).catch(function(e){st.textContent=tzErr(e)}).finally(function(){b.disabled=false})})});
+})();</script></body></html>`;
 }
 
 const STATUS_LABEL: Record<string, [string, string]> = {
