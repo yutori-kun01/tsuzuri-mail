@@ -17,6 +17,7 @@ import { registerGroups } from "./groups.js";
 import { registerReaderAdd } from "./readers-add.js";
 import { registerTopics } from "./topics.js";
 import { registerTags } from "./tags.js";
+import { registerPasskeyLogin, registerPasskeys } from "./passkeys.js";
 import { logViewTabs, registerMailLogs } from "./logs.js";
 import { htmxScriptPath, icon } from "./icons.js";
 import { ADMIN_CSP, adminPage, avatar, delta, donut, emptyState, h, jst, kpiCard, legend, lineChart, linkButton, loginPage, pageHeader, pct, ring, statusPill, tabs, tagPicker, tierPill, TIERS } from "./ui.js";
@@ -59,7 +60,8 @@ export function createAdmin(getCtx: () => Promise<AppContext>, opts: AdminOption
   app.get("/login", async (c) => {
     const ctx = await getCtx();
     if (!ctx.admin) return c.html(loginPage("管理画面のログイン情報が設定されていません（docs/admin.md）"), 503);
-    return c.html(loginPage());
+    const [pk] = await ctx.db.query<{ n: number }>("SELECT count(*)::int AS n FROM admin_passkeys");
+    return c.html(loginPage(undefined, (pk?.n ?? 0) > 0));
   });
 
   app.post("/login", async (c) => {
@@ -85,6 +87,9 @@ export function createAdmin(getCtx: () => Promise<AppContext>, opts: AdminOption
     endSession(c);
     return c.redirect("/admin/login", 303);
   });
+
+  // パスキーでのログイン（ログイン前に使う）
+  registerPasskeyLogin(app, getCtx);
 
   app.use("*", requireAdmin(getCtx));
   // 設定は管理画面で変わりうるので、毎回読み直す
@@ -248,6 +253,9 @@ ${notice}
 </div>`;
     return c.html(adminPage({ title: "ホーム", active: "/admin", body, flash: flashFrom(c) }));
   });
+
+  // ---- パスキー ----
+  registerPasskeys(app, getCtx);
 
   // ---- タグ ----
   registerTags(app, getCtx);
