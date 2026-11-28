@@ -29,6 +29,8 @@ const NAV: (string | [string, string, IconName])[] = [
   ["/admin/footers", "フッター", "panel-bottom"],
   ["/admin/domains", "送信ドメイン", "globe"],
   ["/admin/passkeys", "パスキー", "key-round"],
+  ["/admin/costs", "料金の目安", "calculator"],
+  ["/admin/transfer", "データの引き継ぎ", "hard-drive-download"],
   ["/admin/settings", "設定", "settings"],
 ];
 
@@ -438,7 +440,7 @@ const TABBAR: [string, string, IconName, string[]][] = [
   ["/admin", "ホーム", "house", ["/admin"]],
   ["/admin/broadcasts", "配信", "send", ["/admin/broadcasts", "/admin/sequences", "/admin/automations", "/admin/logs"]],
   ["/admin/readers", "読者", "users", ["/admin/readers", "/admin/forms", "/admin/routes", "/admin/topics", "/admin/tags"]],
-  ["/admin/settings", "設定", "settings", ["/admin/variables", "/admin/footers", "/admin/domains", "/admin/passkeys", "/admin/settings"]],
+  ["/admin/settings", "設定", "settings", ["/admin/variables", "/admin/footers", "/admin/domains", "/admin/passkeys", "/admin/transfer", "/admin/costs", "/admin/settings"]],
 ];
 
 function brandLink(id: string): string {

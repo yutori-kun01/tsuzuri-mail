@@ -18,6 +18,8 @@ import { registerReaderAdd } from "./readers-add.js";
 import { registerTopics } from "./topics.js";
 import { registerTags } from "./tags.js";
 import { registerPasskeyLogin, registerPasskeys } from "./passkeys.js";
+import { registerTransfer } from "./transfer.js";
+import { registerCosts } from "./costs.js";
 import { logViewTabs, registerMailLogs } from "./logs.js";
 import { htmxScriptPath, icon } from "./icons.js";
 import { ADMIN_CSP, adminPage, avatar, delta, donut, emptyState, h, jst, kpiCard, legend, lineChart, linkButton, loginPage, pageHeader, pct, ring, statusPill, tabs, tagPicker, tierPill, TIERS } from "./ui.js";
@@ -254,8 +256,10 @@ ${notice}
     return c.html(adminPage({ title: "ホーム", active: "/admin", body, flash: flashFrom(c) }));
   });
 
-  // ---- パスキー ----
+  // ---- パスキー・データの引き継ぎ・料金の目安 ----
   registerPasskeys(app, getCtx);
+  registerTransfer(app, getCtx);
+  registerCosts(app, getCtx);
 
   // ---- タグ ----
   registerTags(app, getCtx);

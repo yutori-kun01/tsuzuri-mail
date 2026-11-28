@@ -20,6 +20,9 @@ const esc = (v: string | number) => String(v).replace(/&/g, "&amp;").replace(/"/
 export type IconName =
   | "house"
   | "key-round"
+  | "download"
+  | "hard-drive-download"
+  | "calculator"
   | "fingerprint-pattern"
   | "smartphone"
   | "qr-code"

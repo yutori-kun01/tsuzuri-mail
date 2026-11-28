@@ -21,6 +21,10 @@ export interface AppSettings {
   testRecipients?: string[];
   /** 追加の送信ドメイン（シナリオ・一斉配信ごとに別のドメインから送るため。AWS 側は infra/tsuzuri.local.json の tsuzuri:extraSendingDomains） */
   sendingDomains?: string[];
+  /** SES の料金の目安：送信 1,000 通あたりの USD（料金の目安の画面で入れる） */
+  sesPricePer1000Usd?: number;
+  /** 料金の目安を円でも見るときの為替（1 USD あたりの円。空なら円は出さない） */
+  usdJpy?: number;
 }
 
 /** SES の送信ドメイン（ID）の状態。管理画面の「送信ドメイン」で表示する */
