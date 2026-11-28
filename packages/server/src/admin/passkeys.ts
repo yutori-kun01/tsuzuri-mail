@@ -44,7 +44,7 @@ interface PasskeyRow {
 
 /** RP ID（公開 URL のホスト名）と、受け付けるオリジン */
 export function relyingParty(ctx: AppContext, c: Context): { rpId: string; origins: string[] } {
-  const base = new URL(ctx.publicBaseUrl);
+  const base = new URL(ctx.adminBaseUrl || ctx.publicBaseUrl);
   const own = new URL(c.req.url).origin;
   return { rpId: base.hostname, origins: [...new Set([base.origin, own])] };
 }
@@ -182,7 +182,7 @@ ${list}
 <button type="button" class="sub" data-pk-register="hybrid">${icon("qr-code", 20)}スマホに登録（QR コード）<small>PC に出る QR をスマホのカメラで読み取る</small></button>
 </div>
 <p class="flash error" id="pk-status" role="alert"></p>
-<p class="muted" style="margin:var(--space-3) 0 0">パスキーはこのサイト（${h(rpId)}）専用です。管理画面は公開用の URL（${h(ctx.publicBaseUrl)}）で開いてください。QR コードでの登録・ログインには、スマホの Bluetooth をオンにしておく必要があります。iCloud キーチェーンや Google パスワード マネージャーに保存したパスキーは、同じアカウントの他の端末でも使えます。</p></section>
+<p class="muted" style="margin:var(--space-3) 0 0">パスキーはこのサイト（${h(rpId)}）専用です。管理画面は ${h(ctx.adminBaseUrl || ctx.publicBaseUrl)} で開いてください。QR コードでの登録・ログインには、スマホの Bluetooth をオンにしておく必要があります。iCloud キーチェーンや Google パスワード マネージャーに保存したパスキーは、同じアカウントの他の端末でも使えます。</p></section>
 <script>(function(){${WEBAUTHN_CLIENT}
 var st=document.getElementById('pk-status');
 document.querySelectorAll('[data-pk-register]').forEach(function(b){b.addEventListener('click',function(){

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { missingLegalFields, refreshSettings, type AppContext, type AppSettings } from "../context.js";
 import { defaultScoreSettings, validateCustomKey, type ScoreSettings } from "@tsuzuri/core";
@@ -20,8 +19,11 @@ import { registerTags } from "./tags.js";
 import { registerPasskeyLogin, registerPasskeys } from "./passkeys.js";
 import { registerTransfer } from "./transfer.js";
 import { registerCosts } from "./costs.js";
+import { registerCommerce } from "./commerce.js";
+import { registerBackups } from "./backups.js";
 import { logViewTabs, registerMailLogs } from "./logs.js";
-import { htmxScriptPath, icon } from "./icons.js";
+import { icon } from "./icons.js";
+import { HTMX_SOURCE } from "./generated/htmx.js";
 import { ADMIN_CSP, adminPage, avatar, delta, donut, emptyState, h, jst, kpiCard, legend, lineChart, linkButton, loginPage, pageHeader, pct, ring, statusPill, tabs, tagPicker, tierPill, TIERS } from "./ui.js";
 
 export interface AdminOptions {
@@ -40,6 +42,16 @@ async function tagIdFor(ctx: AppContext, name: string): Promise<string> {
   return t!.id;
 }
 
+async function passkeyCount(ctx: AppContext): Promise<number> {
+  const [pk] = await ctx.db.query<{ n: number }>("SELECT count(*)::int AS n FROM admin_passkeys");
+  return pk?.n ?? 0;
+}
+
+/** パスワードでのログインを受け付けるか（止めていても、パスキーが無ければ受け付ける） */
+function passwordLoginOn(ctx: AppContext, passkeys: number): boolean {
+  return ctx.admin?.passwordLogin !== false || passkeys === 0;
+}
+
 export function createAdmin(getCtx: () => Promise<AppContext>, opts: AdminOptions): Hono {
   const app = new Hono();
 
@@ -50,26 +62,26 @@ export function createAdmin(getCtx: () => Promise<AppContext>, opts: AdminOption
   });
 
   // htmx（0BSD）を自分のサーバーから配る。外部 CDN は使わない
-  let htmx: string | undefined;
   app.get("/assets/htmx.min.js", (c) => {
-    htmx ??= readFileSync(htmxScriptPath(), "utf8");
     c.header("Cache-Control", "public, max-age=604800, immutable");
     c.header("Content-Type", "text/javascript; charset=utf-8");
-    return c.body(htmx);
+    return c.body(HTMX_SOURCE);
   });
 
   // ---- ログイン ----
   app.get("/login", async (c) => {
     const ctx = await getCtx();
     if (!ctx.admin) return c.html(loginPage("管理画面のログイン情報が設定されていません（docs/admin.md）"), 503);
-    const [pk] = await ctx.db.query<{ n: number }>("SELECT count(*)::int AS n FROM admin_passkeys");
-    return c.html(loginPage(undefined, (pk?.n ?? 0) > 0));
+    const passkeys = await passkeyCount(ctx);
+    return c.html(loginPage(undefined, passkeys > 0, passwordLoginOn(ctx, passkeys)));
   });
 
   app.post("/login", async (c) => {
     const ctx = await getCtx();
     const site = c.req.header("sec-fetch-site");
     if (site && site !== "same-origin" && site !== "none") return c.text("forbidden", 403);
+    const passkeys = await passkeyCount(ctx);
+    if (!passwordLoginOn(ctx, passkeys)) return c.html(loginPage("パスワードでのログインは止めています。パスキーでログインしてください。", true, false), 403);
     const f = await readForm(c);
     const r = await login(ctx, one(f, "password"), one(f, "code"));
     if (r === "ok") {
@@ -750,6 +762,8 @@ ${vars
   registerGroups(app, getCtx);
   registerAutomations(app, getCtx);
   registerTopics(app, getCtx);
+  registerCommerce(app, getCtx);
+  registerBackups(app, getCtx);
   registerContent(app, getCtx, opts);
   return app;
 }

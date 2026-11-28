@@ -24,12 +24,16 @@ const NAV: (string | [string, string, IconName])[] = [
   ["/admin/routes", "登録経路", "split"],
   ["/admin/topics", "配信の種類", "layers"],
   ["/admin/tags", "タグ", "tag"],
+  "販売",
+  ["/admin/commerce", "商品と注文", "shopping-bag"],
+  ["/admin/commerce/legal", "特商法の表記", "scale"],
   "設定",
   ["/admin/variables", "置き換え文字", "braces"],
   ["/admin/footers", "フッター", "panel-bottom"],
   ["/admin/domains", "送信ドメイン", "globe"],
   ["/admin/passkeys", "パスキー", "key-round"],
   ["/admin/costs", "料金の目安", "calculator"],
+  ["/admin/backups", "バックアップ", "database-backup"],
   ["/admin/transfer", "データの引き継ぎ", "hard-drive-download"],
   ["/admin/settings", "設定", "settings"],
 ];
@@ -440,7 +444,7 @@ const TABBAR: [string, string, IconName, string[]][] = [
   ["/admin", "ホーム", "house", ["/admin"]],
   ["/admin/broadcasts", "配信", "send", ["/admin/broadcasts", "/admin/sequences", "/admin/automations", "/admin/logs"]],
   ["/admin/readers", "読者", "users", ["/admin/readers", "/admin/forms", "/admin/routes", "/admin/topics", "/admin/tags"]],
-  ["/admin/settings", "設定", "settings", ["/admin/variables", "/admin/footers", "/admin/domains", "/admin/passkeys", "/admin/transfer", "/admin/costs", "/admin/settings"]],
+  ["/admin/settings", "設定", "settings", ["/admin/commerce", "/admin/commerce/legal", "/admin/variables", "/admin/footers", "/admin/domains", "/admin/passkeys", "/admin/backups", "/admin/transfer", "/admin/costs", "/admin/settings"]],
 ];
 
 function brandLink(id: string): string {
@@ -695,7 +699,7 @@ export function tabs(items: { href: string; label: string; count?: number; curre
 }
 
 /** hasPasskeys が false（まだ登録が無い）なら、パスワードの欄を最初から開いておく */
-export function loginPage(error?: string, hasPasskeys = false): string {
+export function loginPage(error?: string, hasPasskeys = false, passwordLogin = true): string {
   return `${head("ログイン")}
 <body><div class="login"><div class="card"><div class="login-brand">${logoMark(48, "tz-l")}<div><div class="wordmark">${h(BRAND.name)}</div><p class="tagline">${h(BRAND.tagline)}</p></div></div>
 <p class="promise">${h(BRAND.promise)}</p>
@@ -705,11 +709,15 @@ ${error ? `<div class="flash error" role="alert">${icon("circle-x", 16)}${h(erro
 <button type="button" class="sub" data-pk-login="hybrid" style="width:100%">${icon("qr-code", 18)}スマホで QR コードを読み取ってログイン</button>
 <p class="flash error" id="pk-status" role="alert"></p>
 </div>
-<details class="pw-login"${error || !hasPasskeys ? " open" : ""}><summary>パスワードと認証アプリでログイン</summary>
+${
+  passwordLogin
+    ? `<details class="pw-login"${error || !hasPasskeys ? " open" : ""}><summary>パスワードと認証アプリでログイン</summary>
 <form method="post" action="/admin/login">
 <label for="password">パスワード</label><input id="password" name="password" type="password" autocomplete="current-password" required>
 <label for="code">認証アプリの 6 桁のコード</label><input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required>
-<div class="actions"><button type="submit" style="width:100%">ログイン</button></div></form></details></div></div>
+<div class="actions"><button type="submit" style="width:100%">ログイン</button></div></form></details>`
+    : `<p class="muted pw-login">パスワードでのログインは止めています（パスキーだけで入れます）。</p>`
+}</div></div>
 <style>.pk-login{display:grid;gap:var(--space-2);margin-top:var(--space-4)}.pk-login button{min-height:44px;height:auto;gap:var(--space-2);white-space:normal;text-align:center}@media (max-width:480px){.login .card{padding:var(--space-6) var(--space-4)}}#pk-status:empty{display:none}#pk-status{margin:0}
 .pw-login{margin-top:var(--space-4);border-top:1px solid var(--line);padding-top:var(--space-2)}.pw-login>summary{font-size:13px;color:var(--ink-muted)}</style>
 <script>(function(){${WEBAUTHN_CLIENT}

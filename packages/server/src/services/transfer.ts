@@ -69,7 +69,7 @@ export async function transferTables(db: Db): Promise<string[]> {
   return ordered;
 }
 
-async function columnsOf(db: Db, table: string): Promise<{ name: string; identity: boolean }[]> {
+export async function columnsOf(db: Db, table: string): Promise<{ name: string; identity: boolean }[]> {
   return db.query<{ name: string; identity: boolean }>(
     `SELECT column_name AS name, (is_identity = 'YES') AS identity FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position`,
@@ -143,6 +143,11 @@ export async function openTransfer(ctx: AppContext, file: Buffer, keyText: strin
   if (payload.format !== TRANSFER_FORMAT || payload.version !== TRANSFER_VERSION || typeof payload.tables !== "object") {
     throw new TransferError("tsuzuri-mail の引き継ぎファイルではないか、対応していない版です");
   }
+  return checkPayload(ctx, payload);
+}
+
+/** 中身がこの環境に読み込めるかを確かめる（引き継ぎファイルとバックアップで共通） */
+export async function checkPayload(ctx: AppContext, payload: TransferPayload): Promise<{ payload: TransferPayload; sameSecret: boolean; counts: Record<string, number> }> {
   const here = new Set((await ctx.db.query<{ name: string }>("SELECT name FROM schema_migrations")).map((r) => r.name));
   const newer = (payload.migrations ?? []).filter((m) => !here.has(m));
   if (newer.length) {

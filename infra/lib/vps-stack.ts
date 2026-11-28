@@ -29,12 +29,17 @@ export interface TsuzuriVpsConfig {
    */
   extraSendingDomains?: string[];
   alertEmail: string;
+  /** VPS 用の IAM ユーザーを作るか（既定 true。移行が終わったら false にして消す） */
+  vpsUser?: boolean;
+  /** Cloudflare Workers 用の IAM ユーザーを作るか（既定 false） */
+  workersUser?: boolean;
 }
 
 /**
  * VPS で動かす場合の AWS 側（SES まわりだけ）。
  * - 設定セット（抑制リスト、評判メトリクス）と、配信イベント → SNS → SQS
  * - VPS 用の IAM ユーザー（送信とイベントの受け取りだけ。送信元ドメインと送信元 IP で制限）
+ * - Cloudflare Workers 用の IAM ユーザー（同じ権限。IP の制限はなし。tsuzuri:workersUser が true のときだけ）
  * - バウンス率・苦情率・イベントの滞留の通知
  * アクセスキーはこのスタックでは作らない（作成と保管はオーナーが行う。docs/vps.md）。
  */
@@ -85,60 +90,67 @@ export class TsuzuriVpsStack extends cdk.Stack {
     });
     topic.addSubscription(new subs.SqsSubscription(queue, { rawMessageDelivery: true }));
 
-    // VPS 用の IAM ユーザー（最小権限）
-    const user = new iam.User(this, "VpsUser", { userName: "tsuzuri-vps" });
+    // 送信とイベントの受け取りだけの権限（VPS 用・Workers 用で同じ。VPS 用は接続元の IP でも絞る）
+    const grant = (user: iam.User, sourceIps: string[]) => {
+      const fromIp = sourceIps.length ? { IpAddress: { "aws:SourceIp": sourceIps } } : {};
+      user.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "SendFromOwnDomainOnly",
+          actions: ["ses:SendEmail", "ses:SendRawEmail"],
+          resources: [
+            // サンドボックス中は宛先の ID も対象になりうるので、このアカウント・リージョンの ID すべて
+            ...(cfg.sesSandbox ? [identityArn("*")] : allDomains.map(identityArn)),
+            this.formatArn({ service: "ses", resource: "configuration-set", resourceName: configSet.configurationSetName }),
+          ],
+          conditions: {
+            StringLike: { "ses:FromAddress": allDomains.length === 1 ? `*@${sendingDomain}` : allDomains.map((d) => `*@${d}`) },
+            ...fromIp,
+          },
+        }),
+      );
+      user.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "ReadSesEvents",
+          actions: ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+          resources: [queue.queueArn],
+          ...(sourceIps.length ? { conditions: fromIp } : {}),
+        }),
+      );
+      // 自己点検（doctor）と管理画面の「送信ドメイン」が SES の状態を読むための読み取り専用の権限。変更はできない
+      const readOnlyCond = sourceIps.length ? { conditions: fromIp } : {};
+      user.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "ReadSesSetup",
+          actions: ["ses:GetEmailIdentity", "ses:GetConfigurationSet", "ses:GetConfigurationSetEventDestinations"],
+          resources: [
+            ...allDomains.map(identityArn),
+            this.formatArn({ service: "ses", resource: "configuration-set", resourceName: configSet.configurationSetName }),
+          ],
+          ...readOnlyCond,
+        }),
+      );
+      user.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "ReadSesAccount",
+          // GetAccount はリソースを指定できない（送信枠・本番アクセス・抑制リストの設定を読むだけ）
+          actions: ["ses:GetAccount"],
+          resources: ["*"],
+          ...readOnlyCond,
+        }),
+      );
+    };
+
+    // VPS 用の IAM ユーザー（最小権限。移行が終わったら tsuzuri:vpsUser を false にして消す）
     // 接続元の制限。IPv4 は /32、IPv6 は /128（範囲で書かれていればそのまま）
     const cidr = (ip: string, bits: number) => (ip.includes("/") ? ip : `${ip}/${bits}`);
-    const sourceIps = [
-      ...(cfg.vpsIp ? [cidr(cfg.vpsIp, 32)] : []),
-      ...(cfg.vpsIpv6 ? [cidr(cfg.vpsIpv6, 128)] : []),
-    ];
-    const fromIp = sourceIps.length ? { IpAddress: { "aws:SourceIp": sourceIps } } : {};
-    user.addToPolicy(
-      new iam.PolicyStatement({
-        sid: "SendFromOwnDomainOnly",
-        actions: ["ses:SendEmail", "ses:SendRawEmail"],
-        resources: [
-          // サンドボックス中は宛先の ID も対象になりうるので、このアカウント・リージョンの ID すべて
-          ...(cfg.sesSandbox ? [identityArn("*")] : allDomains.map(identityArn)),
-          this.formatArn({ service: "ses", resource: "configuration-set", resourceName: configSet.configurationSetName }),
-        ],
-        conditions: {
-          StringLike: { "ses:FromAddress": allDomains.length === 1 ? `*@${sendingDomain}` : allDomains.map((d) => `*@${d}`) },
-          ...fromIp,
-        },
-      }),
-    );
-    user.addToPolicy(
-      new iam.PolicyStatement({
-        sid: "ReadSesEvents",
-        actions: ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
-        resources: [queue.queueArn],
-        ...(sourceIps.length ? { conditions: fromIp } : {}),
-      }),
-    );
-    // 自己点検（doctor）が SES の状態を読むための読み取り専用の権限。変更はできない
-    const readOnlyCond = sourceIps.length ? { conditions: fromIp } : {};
-    user.addToPolicy(
-      new iam.PolicyStatement({
-        sid: "ReadSesSetup",
-        actions: ["ses:GetEmailIdentity", "ses:GetConfigurationSet", "ses:GetConfigurationSetEventDestinations"],
-        resources: [
-          ...allDomains.map(identityArn),
-          this.formatArn({ service: "ses", resource: "configuration-set", resourceName: configSet.configurationSetName }),
-        ],
-        ...readOnlyCond,
-      }),
-    );
-    user.addToPolicy(
-      new iam.PolicyStatement({
-        sid: "ReadSesAccount",
-        // GetAccount はリソースを指定できない（送信枠・本番アクセス・抑制リストの設定を読むだけ）
-        actions: ["ses:GetAccount"],
-        resources: ["*"],
-        ...readOnlyCond,
-      }),
-    );
+    const vpsUser = cfg.vpsUser === false ? undefined : new iam.User(this, "VpsUser", { userName: "tsuzuri-vps" });
+    if (vpsUser) {
+      grant(vpsUser, [...(cfg.vpsIp ? [cidr(cfg.vpsIp, 32)] : []), ...(cfg.vpsIpv6 ? [cidr(cfg.vpsIpv6, 128)] : [])]);
+    }
+    // Cloudflare Workers 用の IAM ユーザー（tsuzuri:workersUser を true にしたときだけ）。
+    // Workers の送信元の IP は決まっていないので IP では絞らず、送信元ドメイン・設定セット・キューで絞る
+    const workersUser = cfg.workersUser ? new iam.User(this, "WorkersUser", { userName: "tsuzuri-workers" }) : undefined;
+    if (workersUser) grant(workersUser, []);
 
     if (cfg.alertEmail) {
       const alerts = new sns.Topic(this, "Alerts");
@@ -178,7 +190,13 @@ export class TsuzuriVpsStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "SesEventsQueueUrl", { value: queue.queueUrl });
     new cdk.CfnOutput(this, "ConfigurationSet", { value: configSet.configurationSetName });
-    new cdk.CfnOutput(this, "IamUser", { value: user.userName });
-    new cdk.CfnOutput(this, "CreateAccessKey", { value: `aws iam create-access-key --user-name ${user.userName}` });
+    if (vpsUser) {
+      new cdk.CfnOutput(this, "IamUser", { value: vpsUser.userName });
+      new cdk.CfnOutput(this, "CreateAccessKey", { value: `aws iam create-access-key --user-name ${vpsUser.userName}` });
+    }
+    if (workersUser) {
+      new cdk.CfnOutput(this, "WorkersIamUser", { value: workersUser.userName });
+      new cdk.CfnOutput(this, "WorkersCreateAccessKey", { value: `aws iam create-access-key --user-name ${workersUser.userName}` });
+    }
   }
 }

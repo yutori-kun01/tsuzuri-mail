@@ -15,3 +15,6 @@ export * from "./mail/sender.js";
 export * from "./mail/typo.js";
 export * from "./analytics/steps.js";
 export * from "./groups/groups.js";
+export * from "./payments/provider.js";
+export * from "./payments/stripe.js";
+export * from "./legal/commerce.js";

@@ -1,6 +1,6 @@
 import { buildFields, FIELD_TYPE_LABELS, FIELD_TYPES, NAME_FIELD_KEY, normalizeFields, type BodyFormat, type FieldType, type FormField, type Tier } from "@tsuzuri/core";
 import type { Hono } from "hono";
-import { url, type AppContext } from "../context.js";
+import { linkUrl, url, type AppContext } from "../context.js";
 import { embedSnippet, formPage } from "../http/pages.js";
 import { assertTemplatesValid, TemplateError } from "../services/broadcasts.js";
 import type { StepCondition } from "../services/sequences.js";
@@ -269,7 +269,7 @@ ${groupedList({
   groups,
   head: "<th>名前</th><th>状態</th><th>種類</th><th>通数</th><th>進行中</th><th>完了</th>",
   row: (r) => `<td><a href="/admin/sequences/${h(r.id)}">${h(r.name)}</a><div class="muted">${h(r.slug)}</div></td><td>${statusPill(r.status)}</td>
-<td>${r.purpose === "reengage" ? "休眠者の再確認" : "通常"}</td><td>${r.steps}</td><td>${r.active}</td><td>${r.completed}</td>`,
+<td>${r.purpose === "reengage" ? "休眠者の再確認" : r.purpose === "product" ? "商品" : "通常"}</td><td>${r.steps}</td><td>${r.active}</td><td>${r.completed}</td>`,
 })}
 ${createDialog}`;
     return c.html(adminPage({ title: "シナリオ", active: "/admin/sequences", body, flash: flashFrom(c) }));
@@ -333,7 +333,7 @@ ${createDialog}`;
     const formCards = forms.length
       ? forms
           .map((fm) => {
-            const formUrl = url(ctx, `/f/${fm.slug}`);
+            const formUrl = linkUrl(ctx, `/f/${fm.slug}`);
             return `<div class="pair"><div><b>${h(fm.name)}</b> ${fm.active ? '<span class="pill good">受付中</span>' : '<span class="pill">停止</span>'} <span class="muted">登録 ${fm.signups}</span>
 <div class="muted"><a href="${h(formUrl)}" target="_blank" rel="noopener">${h(formUrl)}</a></div></div>
 <div class="actions" style="margin:0">${formToggle(fm.id, fm.active, `${here}?tab=forms`)}${linkButton(`/admin/forms/${fm.id}`, "フォームを編集", "file-input", true)}</div></div>`;
@@ -407,7 +407,11 @@ ${stepEditor(s.id, newStepDefaults, steps.length === 0, tags).replace('<form met
 <label>配信の種類（読者が「受け取らない」を選んでいたら、このシナリオは届かない）</label>
 ${topicPicker({ topics, current: s.topic_id })}
 <div class="checks"><label class="check"><input type="checkbox" name="allow_reentry" value="1"${s.allow_reentry ? " checked" : ""}>完了した人も、もう一度登録したら最初から送る</label>
-<label class="check"><input type="checkbox" name="reengage" value="1"${s.purpose === "reengage" ? " checked" : ""}>休眠者の再確認シナリオとして使う</label></div>
+</div>
+<label>シナリオの使い道</label><div class="checks">
+<label class="check"><input type="radio" name="purpose" value="normal"${s.purpose === "normal" ? " checked" : ""}>通常（配信中の読者に届く）</label>
+<label class="check"><input type="radio" name="purpose" value="reengage"${s.purpose === "reengage" ? " checked" : ""}>休眠者の再確認シナリオとして使う</label>
+<label class="check"><input type="radio" name="purpose" value="product"${s.purpose === "product" ? " checked" : ""}>商品を届ける（販売の「商品」で選ぶ。買った人に、宣伝メールの同意が無くても届く）</label></div>
 <h2>削除</h2><p class="muted" style="margin:0 0 8px">シナリオとステップを削除します。送信済みの記録と同意の記録は残ります。</p>
 <button type="button" class="danger" data-dialog="del-seq">${icon("trash", 14)}このシナリオを削除…</button>`,
     );
@@ -474,7 +478,7 @@ document.querySelectorAll('[data-open]').forEach(function(a){a.addEventListener(
     const f = await readForm(c);
     const status = ["draft", "active", "archived"].includes(one(f, "status")) ? one(f, "status") : "draft";
     const done = one(f, "done_tag");
-    const reengage = one(f, "reengage") === "1";
+    const purpose = ["normal", "reengage", "product"].includes(one(f, "purpose")) ? one(f, "purpose") : one(f, "reengage") === "1" ? "reengage" : "normal";
     const sender = readSenderFields(ctx, f);
     if ("error" in sender) return back(c, `/admin/sequences/${id}?tab=sender`, "err", sender.error);
     await ctx.db.query(
@@ -485,8 +489,8 @@ document.querySelectorAll('[data-open]').forEach(function(a){a.addEventListener(
         one(f, "name"),
         status,
         done ? await ensureTag(ctx, done) : null,
-        reengage || one(f, "allow_reentry") === "1",
-        reengage ? "reengage" : "normal",
+        purpose === "reengage" || one(f, "allow_reentry") === "1",
+        purpose,
         one(f, "topic_id") && (await ctx.db.query("SELECT 1 FROM topics WHERE id::text = $1", [one(f, "topic_id")])).length ? one(f, "topic_id") : null,
         one(f, "footer_id") && (await ctx.db.query("SELECT 1 FROM footers WHERE id::text = $1", [one(f, "footer_id")])).length ? one(f, "footer_id") : null,
         sender.value.fromName,
@@ -710,7 +714,9 @@ ${groupedList({
     }>("SELECT f.*, t.name AS tag FROM forms f LEFT JOIN tags t ON t.id = f.tag_id WHERE f.id::text = $1", [c.req.param("id")]);
     if (!f) return c.html(adminPage({ title: "フォーム", active: "/admin/forms", body: `${emptyState({ icon: "circle-x", title: "見つかりません", text: "削除されたか、URL が間違っている可能性があります。" })}` }), 404);
     const seqs = await ctx.db.query<{ id: string; name: string; status: string }>("SELECT id, name, status FROM sequences WHERE purpose = 'normal' ORDER BY created_at");
-    const formUrl = url(ctx, `/f/${f.slug}`);
+    const formUrl = linkUrl(ctx, `/f/${f.slug}`);
+    // フォームタグの送信先はアプリへ直接（POST を転送させないため）
+    const formAction = url(ctx, `/f/${f.slug}`);
     const fields = normalizeFields(f.fields);
     const tab = FORM_TABS.some((t) => t.key === c.req.query("tab")) ? c.req.query("tab")! : "basic";
     const linked = seqs.find((x) => x.id === f.sequence_id);
@@ -724,14 +730,14 @@ ${groupedList({
     const windowNote = f.active && (notYet || ended) ? `<br><span class="muted">${icon("calendar-clock", 14)} 受付期間の${notYet ? "前" : "後"}なので、いまはフォームを開くと「受付を終了しました」と表示されます。</span>` : "";
     const field = (name: string, label: string, value: unknown, type = "text", extra = "") =>
       `<div><label>${label}</label><input type="${type}" name="${name}" value="${h(value)}"${extra}></div>`;
-    const snippet = embedSnippet({ action: formUrl, buttonLabel: f.button_label, fields });
+    const snippet = embedSnippet({ action: formAction, buttonLabel: f.button_label, fields });
     const routes = await listRoutes(ctx);
     const routeList = routes.length
       ? routes
           .map(
             (r, i) => `<details class="acc"><summary>${h(r.name)} <code>?r=${h(r.code)}</code></summary><div class="acc-body">
 <label>URL</label><div class="copy-row"><input type="text" readonly value="${h(`${formUrl}?r=${r.code}`)}" id="route-url-${i}"><button type="button" class="sub" data-copy="route-url-${i}">${icon("copy", 16)}コピー</button></div>
-<label>フォームタグ（この経路として数えます）</label><div class="copy-row top"><textarea readonly id="route-tag-${i}" style="min-height:120px;font-family:var(--font-mono);font-size:12px">${h(embedSnippet({ action: formUrl, buttonLabel: f.button_label, fields, route: r.code }))}</textarea><button type="button" class="sub" data-copy="route-tag-${i}">${icon("copy", 16)}コピー</button></div></div></details>`,
+<label>フォームタグ（この経路として数えます）</label><div class="copy-row top"><textarea readonly id="route-tag-${i}" style="min-height:120px;font-family:var(--font-mono);font-size:12px">${h(embedSnippet({ action: formAction, buttonLabel: f.button_label, fields, route: r.code }))}</textarea><button type="button" class="sub" data-copy="route-tag-${i}">${icon("copy", 16)}コピー</button></div></div></details>`,
           )
           .join("")
       : `<p class="muted" style="margin:0">まだ経路がありません。<a href="/admin/routes">登録経路</a>で「X プロフィール」などを作ると、ここに経路ごとの URL とタグが出ます。</p>`;

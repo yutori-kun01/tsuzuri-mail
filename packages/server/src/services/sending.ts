@@ -8,8 +8,9 @@ import {
   validateTemplate,
   type PlaceholderContext,
 } from "@tsuzuri/core";
-import { missingLegalFields, senderInfoUrl, url, type AppContext } from "../context.js";
+import { linkUrl, missingLegalFields, senderInfoUrl, url, type AppContext } from "../context.js";
 import { formatJstDate } from "../time.js";
+import { PRODUCT_ENTITLED_SQL } from "./entitlements.js";
 import { footerBody } from "./footers.js";
 import { confirmToken } from "./subscription.js";
 import { listCustomVariables } from "./variables.js";
@@ -41,6 +42,8 @@ interface Content {
   footerId: string | null;
   /** シナリオ・一斉配信ごとの送信者（空欄の項目は全体の設定） */
   sender: SenderOverride | null;
+  /** 商品のシナリオなら、そのシナリオの id と商品の id（特典は商品のファイルを配る） */
+  product?: { sequenceId: string; productId: string | null };
 }
 
 const SENDER_COLUMNS = "from_name AS \"fromName\", from_address AS \"fromAddress\", reply_to AS \"replyTo\"";
@@ -85,7 +88,12 @@ async function loadContent(ctx: AppContext, m: Claimed): Promise<Content | undef
       "SELECT id FROM forms WHERE sequence_id = $1 AND lead_magnet_key IS NOT NULL ORDER BY created_at LIMIT 1",
       [s.sequence_id],
     );
+    const [p] =
+      s.purpose === "product"
+        ? await ctx.db.query<{ id: string }>("SELECT id FROM products WHERE sequence_id = $1 AND delivery_key IS NOT NULL ORDER BY created_at LIMIT 1", [s.sequence_id])
+        : [];
     return {
+      ...(s.purpose === "product" ? { product: { sequenceId: s.sequence_id, productId: p?.id ?? null } } : {}),
       subject: s.subject ?? "",
       body: s.body_markdown,
       format: s.body_format,
@@ -150,10 +158,15 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
   }
 
   // 配信停止・苦情・バウンスはスコアや区分より常に優先する
+  // 商品のシナリオは、買った人（受け取る権利がある人）に、配信を停止していない限り届ける
+  const entitled =
+    content.product && who.status !== "unsubscribed"
+      ? (await ctx.db.query(`SELECT 1 WHERE ${PRODUCT_ENTITLED_SQL("$1", "$2")}`, [m.contact_id, content.product.sequenceId])).length > 0
+      : false;
   const sendable =
     m.kind === "optin"
       ? who.channel_status === "active" || who.channel_status === "unsubscribed"
-      : who.channel_status === "active" && (who.status === "active" || (content.allowPaused && who.status === "paused"));
+      : who.channel_status === "active" && (who.status === "active" || (content.allowPaused && who.status === "paused") || entitled);
   if (!sendable) {
     await finish(ctx, m.id, "skipped", `not sendable: ${who.status}/${who.channel_status}`);
     return "skipped";
@@ -191,8 +204,11 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
   }
 
   const s = ctx.settings;
-  const unsubscribeUrl = url(ctx, `/u/${createToken("unsubscribe", m.contact_id, ctx.secret)}`);
-  const preferencesUrl = url(ctx, `/p/${createToken("preferences", m.contact_id, ctx.secret)}`);
+  const unsubscribeToken = createToken("unsubscribe", m.contact_id, ctx.secret);
+  // 本文のリンクは LINK_BASE_URL（あれば）、ワンクリック配信停止のヘッダーは常にアプリへ直接（POST を転送させないため）
+  const unsubscribeUrl = linkUrl(ctx, `/u/${unsubscribeToken}`);
+  const oneClickUnsubscribeUrl = url(ctx, `/u/${unsubscribeToken}`);
+  const preferencesUrl = linkUrl(ctx, `/p/${createToken("preferences", m.contact_id, ctx.secret)}`);
   const builtins: Record<string, string> = {
     cancel: unsubscribeUrl,
     settings: preferencesUrl,
@@ -205,11 +221,13 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
     subscribed_date: formatJstDate(new Date(who.created_at)),
   };
   if (m.broadcast_id) {
-    builtins.webview = url(ctx, `/w/${m.broadcast_id}?r=${createToken("read", m.id, ctx.secret)}`);
+    builtins.webview = linkUrl(ctx, `/w/${m.broadcast_id}?r=${createToken("read", m.id, ctx.secret)}`);
   }
-  if (m.kind === "optin" && m.form_id) builtins.confirm = url(ctx, `/confirm/${confirmToken(ctx, m.contact_id, m.form_id)}`);
-  if (content.formId) {
-    builtins.download = url(ctx, `/d/${createToken("download", `${m.contact_id}/${content.formId}/${m.id}`, ctx.secret)}`);
+  if (m.kind === "optin" && m.form_id) builtins.confirm = linkUrl(ctx, `/confirm/${confirmToken(ctx, m.contact_id, m.form_id)}`);
+  if (content.product?.productId) {
+    builtins.download = linkUrl(ctx, `/d/${createToken("download", `${m.contact_id}/p:${content.product.productId}/${m.id}`, ctx.secret)}`);
+  } else if (content.formId) {
+    builtins.download = linkUrl(ctx, `/d/${createToken("download", `${m.contact_id}/${content.formId}/${m.id}`, ctx.secret)}`);
   }
   const context: PlaceholderContext = { builtins, custom, attributes: who.attributes ?? {} };
 
@@ -218,8 +236,8 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
     m.kind === "optin"
       ? undefined
       : {
-          clickUrl: (i: number) => url(ctx, `/c/${createToken("click", `${m.id}/${i}`, ctx.secret)}`),
-          openPixelUrl: url(ctx, `/o/${createToken("open", m.id, ctx.secret)}.gif`),
+          clickUrl: (i: number) => linkUrl(ctx, `/c/${createToken("click", `${m.id}/${i}`, ctx.secret)}`),
+          openPixelUrl: linkUrl(ctx, `/o/${createToken("open", m.id, ctx.secret)}.gif`),
         };
 
   const footerTemplate = await footerBody(ctx.db, content.footerId);
@@ -245,7 +263,7 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
   });
 
   try {
-    const headers = m.kind === "optin" ? {} : listUnsubscribeHeaders(unsubscribeUrl);
+    const headers = m.kind === "optin" ? {} : listUnsubscribeHeaders(oneClickUnsubscribeUrl);
     const result = await ctx.provider.send({
       idempotencyKey: m.id,
       to: who.address,
@@ -259,7 +277,7 @@ export async function sendMessage(ctx: AppContext, messageId: string): Promise<S
     });
     await ctx.db.query(
       // 件名は置き換え前のひな形を残す（読者ごとの値は残さない。元のシナリオなどを消しても何のメールか分かるように）
-      "UPDATE messages SET status = 'sent', sent_at = $2, provider_message_id = $3, links = $4, link_count = $5, subject = $6 WHERE id = $1",
+      "UPDATE messages SET status = 'sent', sent_at = $2, provider_message_id = $3, links = $4, link_count = $5, subject = $6, error = NULL WHERE id = $1",
       [m.id, ctx.now(), result.providerMessageId, JSON.stringify(rendered.links), rendered.links.length, content.subject],
     );
     return "sent";

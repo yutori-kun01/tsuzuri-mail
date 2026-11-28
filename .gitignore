@@ -14,3 +14,7 @@ content/settings.json
 infra/cdk.out/
 infra/cdk.context.json
 infra/tsuzuri.local.json
+.wrangler/
+.dev.vars
+.dev.vars.*
+deploy/cloudflare/.dev.vars

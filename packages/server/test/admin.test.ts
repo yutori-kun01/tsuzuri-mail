@@ -351,7 +351,7 @@ describe("tag names without the src: prefix", () => {
   it("renames existing src: tags and the places that refer to them by name", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    const { MIGRATIONS_DIR } = await import("../src/db.js");
+    const { MIGRATIONS_DIR } = await import("../src/migrate.js");
     const db = env.ctx.db;
     await db.query("INSERT INTO tags (name, category) VALUES ('src:seminar', 'src'), ('src:dup', 'src'), ('dup', 'cust')");
     await db.query("INSERT INTO automation_rules (name, trigger_type, trigger_value, action_type, action_value) VALUES ('r', 'tag_added', 'src:seminar', 'add_tag', 'src:seminar')");

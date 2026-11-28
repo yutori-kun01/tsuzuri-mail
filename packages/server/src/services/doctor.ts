@@ -4,6 +4,7 @@ import {
   GetConfigurationSetEventDestinationsCommand,
   GetEmailIdentityCommand,
 } from "@aws-sdk/client-sesv2";
+import { missingCommerceFields } from "@tsuzuri/core";
 import { missingLegalFields, type AppContext } from "../context.js";
 
 /**
@@ -54,6 +55,21 @@ export async function runDoctor(ctx: AppContext, opts: DoctorOptions = {}): Prom
   );
   out.push(ctx.secret.length >= 32 && !ctx.secret.startsWith("local-development") ? ok("署名用の鍵", "設定済み") : fail("署名用の鍵", "TOKEN_SECRET が未設定か、開発用の値のまま"));
   out.push(ctx.admin ? ok("管理画面のログイン情報", "設定済み") : warn("管理画面のログイン情報", "pnpm tsuzuri admin:setup で設定する"));
+
+  if (ctx.linkBaseUrl) {
+    out.push(/^https:\/\//.test(ctx.linkBaseUrl) ? ok("本文のリンクの URL", ctx.linkBaseUrl) : fail("本文のリンクの URL", `https で始まっていない：${ctx.linkBaseUrl}`));
+  }
+
+  // ---- 販売（商品があるときだけ） ----
+  const [sale] = await ctx.db.query<{ n: number }>("SELECT count(*)::int AS n FROM products WHERE status = 'active'");
+  if ((sale?.n ?? 0) > 0) {
+    const missingCommerce = missingCommerceFields(s.commerce);
+    out.push(
+      missingCommerce.length
+        ? fail("特定商取引法に基づく表記", `販売中の商品があるのに未入力：${missingCommerce.join("、")}`)
+        : ok("特定商取引法に基づく表記", "必要な項目が入力済み（/legal/commerce）"),
+    );
+  }
 
   // ---- フォーム（ダブルオプトインとプライバシーポリシー） ----
   const forms = await ctx.db.query<{ slug: string; privacy_url: string | null; confirm_body_markdown: string; double_optin: boolean }>(

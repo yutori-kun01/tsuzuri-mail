@@ -20,6 +20,9 @@ export const BACKUP_TABLES = [
   "custom_variables",
   "app_settings",
   "score_settings",
+  "products",
+  "orders",
+  "entitlements",
 ] as const;
 
 const RECENT_DAYS = 90;

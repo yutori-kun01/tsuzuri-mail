@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import { ICON_NODES } from "./generated/icon-nodes.js";
 
 /**
  * Lucide のアイコン（lucide-static、ISC ライセンス）をサーバー側で SVG にする。
@@ -6,12 +6,9 @@ import { createRequire } from "node:module";
  */
 type IconNode = [string, Record<string, string | number>][];
 
-const require = createRequire(import.meta.url);
-let nodes: Record<string, IconNode> | undefined;
-
+/** 使うアイコンだけを書き出したもの（scripts/gen-assets.mjs。IconName を増やしたら pnpm gen:assets） */
 function load(): Record<string, IconNode> {
-  nodes ??= require("lucide-static/icon-nodes.json") as Record<string, IconNode>;
-  return nodes;
+  return ICON_NODES;
 }
 
 const esc = (v: string | number) => String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -84,7 +81,11 @@ export type IconName =
   | "globe"
   | "pencil"
   | "folder"
-  | "arrow-up";
+  | "arrow-up"
+  | "shopping-bag"
+  | "receipt"
+  | "scale"
+  | "database-backup";
 
 export function icon(name: IconName, size = 16, cls = "icon"): string {
   const node = load()[name];
@@ -97,9 +98,4 @@ export function icon(name: IconName, size = 16, cls = "icon"): string {
 export function missingIcons(names: readonly string[]): string[] {
   const all = load();
   return names.filter((n) => !all[n]);
-}
-
-/** htmx の本体（自分のサーバーから配る） */
-export function htmxScriptPath(): string {
-  return require.resolve("htmx.org/dist/htmx.min.js");
 }

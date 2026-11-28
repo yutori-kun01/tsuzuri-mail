@@ -1,7 +1,8 @@
 import { X509Certificate } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { MIGRATIONS_DIR, pgConfig } from "../src/db.js";
+import { pgConfig } from "../src/db.js";
+import { MIGRATIONS_DIR } from "../src/migrate.js";
 
 // テスト専用の自己署名証明書（秘密鍵は破棄済み。どこにも信頼されていない）
 const testCa = readFileSync(new URL("./fixtures/test-ca.crt", import.meta.url), "utf8");

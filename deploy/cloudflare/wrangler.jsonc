@@ -1,0 +1,95 @@
+// tsuzuri-mail の Cloudflare Workers 設定（本番の標準構成）。手順は docs/cloudflare.md。
+//
+// Worker は 2 つに分ける（同じコードを SURFACES で切り替える）：
+//   tsuzuri        … 読者向けページ・決済の Webhook・毎分/毎晩の処理（Access をかけない）
+//   tsuzuri-admin  … 管理画面だけ（workers.dev 全体に Cloudflare Access をかける：wrangler deploy --env admin）
+// 1 つにまとめる場合は、下の vars の SURFACES を "public,admin" にして、env.admin を使わない
+// （そのときは Access を /admin だけにかけ、ACCESS_TEAM_DOMAIN / ACCESS_AUD で Worker 側でも確かめる）。
+//
+// ここに秘密値は書かない。秘密値は `wrangler secret put <名前>` で入れる：
+//   TOKEN_SECRET（VPS と同じ値）、ADMIN_PASSWORD_HASH、ADMIN_TOTP_SECRET、
+//   AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY、BACKUP_ENCRYPTION_KEY、STRIPE_WEBHOOK_SECRET
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "tsuzuri",
+  "main": "../../packages/server/src/workers/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  // プレビュー用の URL は使わない（管理画面などが別の URL で開けてしまわないように）
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  // 毎晩のバックアップに余裕を持たせる（CPU 時間の課金はごくわずか。Paid の上限は 5 分）
+  "limits": { "cpu_ms": 120000 },
+
+  "triggers": {
+    // 毎分：送信・自動化・SES のイベント。毎日 18:00 UTC（日本時間 3:00）：スコア・バックアップ・掃除
+    "crons": ["* * * * *", "0 18 * * *"]
+  },
+
+  "vars": {
+    "SURFACES": "public",
+    // workers.dev の URL（末尾スラッシュなし）。デプロイ後に表示される URL を入れる
+    "PUBLIC_BASE_URL": "https://tsuzuri.example.workers.dev",
+    // メール本文のリンクの基点（任意）。空ならアプリの URL のまま
+    "LINK_BASE_URL": "",
+    "AWS_REGION": "ap-northeast-1",
+    "SES_CONFIGURATION_SET": "tsuzuri",
+    "SES_EVENTS_QUEUE_URL": "",
+    "MAX_SEND_RATE": "1",
+    "SEND_WINDOW_SECONDS": "45",
+    "PRIVACY_URL": "",
+    "CORS_ORIGINS": "",
+    "BACKUP_KEEP_DAYS": "30"
+  },
+
+  "hyperdrive": [
+    // npx wrangler hyperdrive create tsuzuri-db --connection-string="<Supabase の Direct の接続文字列>"
+    { "binding": "HYPERDRIVE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }
+  ],
+
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "tsuzuri-files" },
+    { "binding": "BACKUPS", "bucket_name": "tsuzuri-backups" }
+  ],
+
+  // 接続元の IP ごとの回数制限（Workers の Rate Limiting。period は 10 か 60 秒）
+  "ratelimits": [
+    { "name": "SIGNUP_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "ALL_LIMITER", "namespace_id": "1003", "simple": { "limit": 600, "period": 60 } }
+  ],
+
+  "env": {
+    "admin": {
+      "name": "tsuzuri-admin",
+      "workers_dev": true,
+      "preview_urls": false,
+      "triggers": { "crons": [] },
+      "vars": {
+        "SURFACES": "admin",
+        // 読者向けの Worker の URL（管理画面から送るメールの配信停止リンク・フォームタグ・特商法のページなどに使う）
+        "PUBLIC_BASE_URL": "https://tsuzuri.example.workers.dev",
+        // メール本文のリンクの基点（任意。読者向けの Worker と同じ値にそろえる）
+        "LINK_BASE_URL": "",
+        // 管理画面の Worker の workers.dev の URL（パスキーはこのホスト名に結びつく）
+        "ADMIN_BASE_URL": "https://tsuzuri-admin.example.workers.dev",
+        "AWS_REGION": "ap-northeast-1",
+        "SES_CONFIGURATION_SET": "tsuzuri",
+        // Cloudflare Access（Zero Trust）のチーム名のドメインと、アプリケーションの AUD タグ
+        "ACCESS_TEAM_DOMAIN": "",
+        "ACCESS_AUD": "",
+        // パスキーを登録したら "off" にすると、パスワード＋認証アプリのログインを止められる
+        "ADMIN_PASSWORD_LOGIN": "on"
+      },
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }],
+      "r2_buckets": [
+        { "binding": "FILES", "bucket_name": "tsuzuri-files" },
+        { "binding": "BACKUPS", "bucket_name": "tsuzuri-backups" }
+      ],
+      "ratelimits": [
+        { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+        { "name": "ALL_LIMITER", "namespace_id": "1004", "simple": { "limit": 600, "period": 60 } }
+      ]
+    }
+  }
+}

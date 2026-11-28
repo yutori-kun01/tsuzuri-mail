@@ -9,7 +9,8 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MemoryProvider, renderEmail, type MailProvider } from "@tsuzuri/core";
 import { loadSettings, missingLegalFields, settingsFromEnv, type AppContext } from "./context.js";
-import { migrate, pgDb, type Db } from "./db.js";
+import { pgDb, type Db } from "./db.js";
+import { migrate } from "./migrate.js";
 import { createApp } from "./http/app.js";
 import { ConsoleProvider } from "./providers/ses.js";
 import { launchDueBroadcasts } from "./services/broadcasts.js";
@@ -60,6 +61,7 @@ async function context(db: Db, provider: MailProvider): Promise<AppContext> {
     db,
     provider,
     publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? "http://localhost:8787").replace(/\/$/, ""),
+    ...(process.env.LINK_BASE_URL ? { linkBaseUrl: process.env.LINK_BASE_URL.replace(/\/$/, "") } : {}),
     secret,
     settings: await loadSettings(db, { ...settingsFromEnv(), defaultName: "読者" }),
     now: () => new Date(),
@@ -79,6 +81,9 @@ const HELP = `使い方: pnpm tsuzuri <command>
   form:embed <slug> [--no-name]    他のページに貼るフォームタグを出力する
   admin:setup --local [--env-file <path>] | --ssm
                                    管理画面のパスワードと認証アプリを設定する（.env など、または AWS の SSM に保存）
+  backup:key                       バックアップの暗号化キー（TZK1-…）を新しく作って表示する（DB には触らない）
+  backup:restore <file.tzb> --yes  R2 のバックアップ（管理画面の「バックアップ」でダウンロード）を DB に読み込む（今のデータをすべて置き換える）。
+                                   キーは環境変数 BACKUP_ENCRYPTION_KEY で渡す（コマンドの引数に書かない）
   score                            読者スコアを再計算
   doctor [--http]                  本番前の自己点検（法定表示、フォーム、SES の状態など）。--http で公開ページも確認
   dev [--port 8787]                ローカルでフォーム・配信停止などを動かす（メールは送らず画面に表示）
@@ -99,6 +104,7 @@ async function main(): Promise<void> {
       ssm: { type: "boolean" },
       "env-file": { type: "string" },
       http: { type: "boolean" },
+      yes: { type: "boolean" },
     },
   });
   if (!cmd || cmd === "help") return void console.log(HELP);
@@ -106,6 +112,13 @@ async function main(): Promise<void> {
     if (!values.local === !values.ssm) throw new Error("admin:setup --local（手元の .env）か --ssm（AWS）のどちらかを指定してください");
     const { adminSetup } = await import("./admin/setup.js");
     return adminSetup(values.ssm ? "ssm" : "local", "/tsuzuri/", values["env-file"] ?? ".env");
+  }
+
+  if (cmd === "backup:key") {
+    const { generateTransferKey } = await import("@tsuzuri/core");
+    console.log(generateTransferKey().text);
+    console.error("\nこのキーはパスワード管理アプリなどに保管し、Worker には `wrangler secret put BACKUP_ENCRYPTION_KEY` で入れてください。\nキーを失うとバックアップは復元できません。");
+    return;
   }
 
   const { db, exec, close } = await openDb();
@@ -205,6 +218,32 @@ async function main(): Promise<void> {
       });
       console.log(formatDoctor(results));
       if (results.some((r) => r.status === "fail")) process.exitCode = 1;
+    } else if (cmd === "backup:restore") {
+      const file = positionals[0];
+      const keyText = process.env.BACKUP_ENCRYPTION_KEY;
+      if (!file) throw new Error("backup:restore <file.tzx> --yes");
+      if (!keyText) throw new Error("環境変数 BACKUP_ENCRYPTION_KEY にバックアップの暗号化キーを入れてください");
+      await migrate(db, undefined, exec);
+      const ctx = await context(db, new MemoryProvider());
+      const { openTransfer, applyTransfer, checkPayload } = await import("./services/transfer.js");
+      const { readBundle, BUNDLE_MAGIC } = await import("./services/cloud-backup.js");
+      const { parseTransferKey } = await import("@tsuzuri/core");
+      const buf = await readFile(file);
+      // .tzb：毎晩のバックアップ（管理画面の「バックアップ」でダウンロード）／ .tzx：データの引き継ぎファイル
+      const opened =
+        buf.subarray(0, 4).toString("latin1") === BUNDLE_MAGIC
+          ? await checkPayload(ctx, readBundle(buf, parseTransferKey(keyText)))
+          : await openTransfer(ctx, buf, keyText);
+      const total = Object.values(opened.counts).reduce((a, b) => a + b, 0);
+      console.log(`バックアップの日時：${opened.payload.exportedAt}／${Object.keys(opened.counts).length} 個の表・${total} 行`);
+      if (!opened.sameSecret) console.log("  ⚠ TOKEN_SECRET がバックアップを取った環境と違います。送ったメールの配信停止リンクなどが使えなくなります。");
+      if (!values.yes) {
+        console.log("今のデータをすべて置き換えます。よければ --yes を付けてもう一度実行してください。");
+        process.exitCode = 1;
+      } else {
+        const counts = await applyTransfer(ctx, opened.payload);
+        console.log(`読み込みました：${Object.entries(counts).filter(([, n]) => n > 0).map(([t, n]) => `${t} ${n}`).join("、")}`);
+      }
     } else if (cmd === "score") {
       const ctx = await context(db, new MemoryProvider());
       console.log(await recomputeAllScores(ctx));

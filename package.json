@@ -10,12 +10,16 @@
     "test": "vitest run",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/server --noEmit && tsc -p infra --noEmit",
     "tsuzuri": "tsx packages/server/src/cli.ts",
-    "start:vps": "node --import tsx packages/server/src/vps/main.ts"
+    "start:vps": "node --import tsx packages/server/src/vps/main.ts",
+    "cf:dev": "wrangler dev -c deploy/cloudflare/wrangler.jsonc --test-scheduled",
+    "cf:deploy": "wrangler deploy -c deploy/cloudflare/wrangler.jsonc && wrangler deploy -c deploy/cloudflare/wrangler.jsonc --env admin",
+    "cf:check": "wrangler deploy -c deploy/cloudflare/wrangler.jsonc --dry-run --outdir .wrangler/dry-run"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
-    "vitest": "5.1.0"
+    "vitest": "5.1.0",
+    "wrangler": "4.160.1"
   }
 }

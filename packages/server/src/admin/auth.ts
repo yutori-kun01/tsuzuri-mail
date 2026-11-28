@@ -75,7 +75,7 @@ export function requireAdmin(getCtx: () => Promise<AppContext>): MiddlewareHandl
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       const site = c.req.header("sec-fetch-site");
       const origin = c.req.header("origin");
-      const own = [new URL(c.req.url).origin, ctx.publicBaseUrl ? new URL(ctx.publicBaseUrl).origin : ""];
+      const own = [new URL(c.req.url).origin, ...[ctx.publicBaseUrl, ctx.adminBaseUrl].filter((u): u is string => Boolean(u)).map((u) => new URL(u).origin)];
       const sameSite = site ? site === "same-origin" : origin !== undefined && own.includes(origin);
       if (!sameSite) return c.text("forbidden", 403);
     }

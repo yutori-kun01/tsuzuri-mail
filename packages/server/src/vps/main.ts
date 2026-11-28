@@ -13,7 +13,8 @@ import { serve } from "@hono/node-server";
 import { SESv2Client } from "@aws-sdk/client-sesv2";
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { loadSettings, refreshSettings, settingsFromEnv, type AppContext } from "../context.js";
-import { MIGRATIONS_DIR, migrate, pgDb } from "../db.js";
+import { pgDb } from "../db.js";
+import { MIGRATIONS_DIR, migrate } from "../migrate.js";
 import { createApp } from "../http/app.js";
 import { LocalFileStorage, localBackupWriter, pruneLocalBackups } from "../providers/local.js";
 import { ConsoleProvider, SesProvider, sesIdentityStatus } from "../providers/ses.js";
@@ -76,7 +77,7 @@ async function buildContext(): Promise<AppContext> {
     secret,
     settings: await loadSettings(db, settingsFromEnv(env)),
     ...(env.FILES_DIR ? { storage: new LocalFileStorage(env.FILES_DIR, publicBaseUrl, secret) } : {}),
-    ...(passwordHash && totpSecret ? { admin: { passwordHash, totpSecret } } : {}),
+    ...(passwordHash && totpSecret ? { admin: { passwordHash, totpSecret, passwordLogin: env.ADMIN_PASSWORD_LOGIN !== "off" } } : {}),
     now: () => new Date(),
   };
 }

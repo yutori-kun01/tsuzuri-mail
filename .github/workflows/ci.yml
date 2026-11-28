@@ -22,6 +22,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      # Cloudflare Workers の形にまとめられるか（デプロイはしない）
+      - name: Workers bundle
+        run: pnpm cf:check
+        env:
+          WRANGLER_SEND_METRICS: "false"
       - name: CDK synth
         working-directory: infra
         run: npx cdk synth --quiet --no-notices

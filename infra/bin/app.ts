@@ -60,6 +60,10 @@ if (ctx("hosting") === "lambda") {
       // シナリオごとに別のドメインから送るときの、追加の送信ドメイン（例 ["news.example.jp"]）
       extraSendingDomains: ctxList("extraSendingDomains"),
       alertEmail: env.TSUZURI_ALERT_EMAIL ?? "",
+      // Cloudflare Workers に移すとき：tsuzuri:workersUser を true にして Workers 用の IAM ユーザーを作る。
+      // 移行が終わったら tsuzuri:vpsUser を false にして VPS 用を消す
+      vpsUser: ctx("vpsUser") !== "false",
+      workersUser: ctx("workersUser") === "true",
     },
     { ...stackProps, description: "tsuzuri-mail: SES configuration set, events queue and IAM user for VPS hosting" },
   );

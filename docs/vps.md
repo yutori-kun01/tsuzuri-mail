@@ -1,4 +1,6 @@
-# Xserver VPS での運用
+# Xserver VPS での運用（旧構成）
+
+> 本番の標準構成は Cloudflare Workers に移した（[cloudflare.md](cloudflare.md)）。この手順は、移行元の VPS を動かし続ける間と、移行の作業のために残している。
 
 本番は Xserver VPS で動かす。AWS は SES まわり（送信とバウンス・苦情の受け取り）だけに使う。
 動かし方は **Docker 版（標準）** と、Docker を使わない **systemd 版** の 2 通りある。どちらもアプリの中身は同じ。

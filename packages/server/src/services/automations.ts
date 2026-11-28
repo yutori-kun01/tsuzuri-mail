@@ -2,7 +2,7 @@ import type { AppContext } from "../context.js";
 import type { Db } from "../db.js";
 import { enroll } from "./sequences.js";
 
-export type TriggerType = "link_click" | "tag_added" | "sequence_completed" | "form_confirmed";
+export type TriggerType = "link_click" | "tag_added" | "sequence_completed" | "form_confirmed" | "purchased" | "refunded";
 export type ActionType = "add_tag" | "remove_tag" | "start_sequence" | "stop_sequence";
 
 export interface Rule {
@@ -20,6 +20,8 @@ export const TRIGGERS: Record<TriggerType, string> = {
   tag_added: "タグが付いたとき",
   sequence_completed: "シナリオを最後まで受け取ったとき",
   form_confirmed: "フォームで登録が完了したとき",
+  purchased: "商品を買ったとき",
+  refunded: "商品の代金が全額返金されたとき",
 };
 
 export const ACTIONS: Record<ActionType, string> = {
@@ -40,7 +42,7 @@ interface Hit {
   value: string;
 }
 
-/** きっかけ（クリック・タグ・シナリオ完了・登録完了）を集める */
+/** きっかけ（クリック・タグ・シナリオ完了・登録完了・購入・返金）を集める */
 async function collectHits(db: Db, from: Date, to: Date): Promise<Hit[]> {
   const hits: Hit[] = [];
   const clicks = await db.query<{ contact_id: string; url: string | null }>(
@@ -65,6 +67,13 @@ async function collectHits(db: Db, from: Date, to: Date): Promise<Hit[]> {
     [from, to],
   );
   for (const c of confirmed) hits.push({ contactId: c.contact_id, type: "form_confirmed", value: c.form_id });
+  const bought = await db.query<{ contact_id: string; product_id: string; refunded: boolean }>(
+    `SELECT contact_id, product_id::text, false AS refunded FROM entitlements WHERE granted_at > $1 AND granted_at <= $2
+     UNION ALL
+     SELECT contact_id, product_id::text, true AS refunded FROM entitlements WHERE revoked_at > $1 AND revoked_at <= $2`,
+    [from, to],
+  );
+  for (const b of bought) hits.push({ contactId: b.contact_id, type: b.refunded ? "refunded" : "purchased", value: b.product_id });
   return hits;
 }
 
@@ -154,7 +163,11 @@ export function describeRule(r: Pick<Rule, "trigger_type" | "trigger_value" | "a
         ? `タグ「${r.trigger_value}」が付いたとき`
         : r.trigger_type === "sequence_completed"
           ? `シナリオ「${v(r.trigger_value)}」を最後まで受け取ったとき`
-          : `フォーム「${v(r.trigger_value)}」で登録が完了したとき`;
+          : r.trigger_type === "purchased"
+            ? `商品「${v(r.trigger_value)}」を買ったとき`
+            : r.trigger_type === "refunded"
+              ? `商品「${v(r.trigger_value)}」の代金が全額返金されたとき`
+              : `フォーム「${v(r.trigger_value)}」で登録が完了したとき`;
   const action =
     r.action_type === "add_tag"
       ? `タグ「${r.action_value}」を付ける`

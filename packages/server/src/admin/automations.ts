@@ -19,7 +19,7 @@ async function knownUrls(ctx: AppContext): Promise<string[]> {
 /** 名前の一覧（シナリオ・フォームの id → 名前） */
 export async function ruleNames(ctx: AppContext): Promise<Map<string, string>> {
   const rows = await ctx.db.query<{ id: string; name: string }>(
-    "SELECT id::text, name FROM sequences UNION ALL SELECT id::text, name FROM forms",
+    "SELECT id::text, name FROM sequences UNION ALL SELECT id::text, name FROM forms UNION ALL SELECT id::text, name FROM products",
   );
   return new Map(rows.map((r) => [r.id, r.name]));
 }
@@ -33,6 +33,7 @@ export function registerAutomations(app: Hono, getCtx: () => Promise<AppContext>
     const names = await ruleNames(ctx);
     const seqs = await ctx.db.query<{ id: string; name: string; status: string }>("SELECT id, name, status FROM sequences ORDER BY created_at");
     const forms = await ctx.db.query<{ id: string; name: string }>("SELECT id, name FROM forms ORDER BY created_at");
+    const products = await ctx.db.query<{ id: string; name: string }>("SELECT id, name FROM products WHERE status <> 'archived' ORDER BY created_at");
     const tags = await tagsWithCounts(ctx);
     const urls = await knownUrls(ctx);
     const opt = (v: string, l: string) => `<option value="${h(v)}">${h(l)}</option>`;
@@ -54,6 +55,7 @@ export function registerAutomations(app: Hono, getCtx: () => Promise<AppContext>
       { label: "タグが付いたらシナリオを始める", trigger: "tag_added", action: "start_sequence", hint: "タグ「○○に興味」 → 案内のシナリオ" },
       { label: "シナリオを終えたら次のシナリオへ", trigger: "sequence_completed", action: "start_sequence", hint: "特典のシナリオ完了 → 本編のシナリオ" },
       { label: "申込リンクを押したら案内を止める", trigger: "link_click", action: "stop_sequence", hint: "申込ページを押した → 案内のシナリオを止める" },
+      { label: "買った人の案内を止める", trigger: "purchased", action: "stop_sequence", hint: "商品を買った → 販売の案内のシナリオを止める" },
     ];
     const builder = `<details class="card add-step" id="new-rule"${rules.length ? "" : " open"}><summary>${icon("plus", 16)}ルールを作る</summary>
 <p class="muted" style="margin:0 0 8px">よく使う形から選ぶと、下の欄に入ります。</p>
@@ -69,6 +71,8 @@ export function registerAutomations(app: Hono, getCtx: () => Promise<AppContext>
 <div class="t-tag_added" hidden><label for="trigger_tag">付いたタグ</label><input id="trigger_tag" type="text" name="trigger_tag" list="tag-list" maxlength="40"></div>
 <div class="t-sequence_completed" hidden><label for="trigger_seq">シナリオ</label><select id="trigger_seq" name="trigger_seq">${seqs.map((s) => opt(s.id, s.name)).join("")}</select></div>
 <div class="t-form_confirmed" hidden><label for="trigger_form">フォーム</label><select id="trigger_form" name="trigger_form">${forms.map((f) => opt(f.id, f.name)).join("")}</select></div>
+<div class="t-purchased t-refunded" hidden><label for="trigger_product">商品</label><select id="trigger_product" name="trigger_product">${products.map((p) => opt(p.id, p.name)).join("")}</select>
+<p class="muted" style="margin:4px 0 0">宣伝のシナリオを始めるのは、購入画面でお知らせに同意した人（配信中の読者）だけです。商品を届けるシナリオは商品の設定で選びます。</p></div>
 </div>
 <div class="rule-arrow big">${icon("arrow-right", 22)}</div>
 <div class="build-card then"><div class="build-title">${icon("workflow", 16)}したら（動作）</div><select id="action_type" name="action_type" aria-label="動作" onchange="tzShow(this,'a-')">${(Object.keys(ACTIONS) as ActionType[]).map((k) => opt(k, ACTIONS[k])).join("")}</select>
@@ -115,6 +119,8 @@ ${rules.length ? cards : emptyState({ icon: "zap", title: "まだルールがあ
       tag_added: one(f, "trigger_tag"),
       sequence_completed: one(f, "trigger_seq"),
       form_confirmed: one(f, "trigger_form"),
+      purchased: one(f, "trigger_product"),
+      refunded: one(f, "trigger_product"),
     }[trigger];
     const actionValue = action === "add_tag" || action === "remove_tag" ? one(f, "action_tag") : one(f, "action_seq");
     if (!triggerValue) return back(c, "/admin/automations", "err", trigger === "link_click" ? "押されたリンクの URL（の一部）を入れてください" : "きっかけの対象を選んでください");

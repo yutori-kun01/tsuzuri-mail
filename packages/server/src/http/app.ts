@@ -1,18 +1,16 @@
-import { createToken, escapeHtml, normalizeFields, renderEmail, suggestEmailFix, validateSubmission, verifyToken } from "@tsuzuri/core";
-import { Hono, type Context } from "hono";
+import { commerceDisclosureRows, createToken, escapeHtml, normalizeFields, PaymentSignatureError, renderEmail, suggestEmailFix, validateSubmission, verifyToken } from "@tsuzuri/core";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { senderInfoUrl, url, type AppContext } from "../context.js";
 import { confirm, FORM_OPEN_SQL, subscribe, unsubscribe } from "../services/subscription.js";
 import { recordClick, recordDownload, recordOpen, recordRead } from "../services/tracking.js";
 import { listCustomVariables } from "../services/variables.js";
+import { handlePaymentEvent } from "../services/commerce.js";
 import { getPreferences, PAUSE_OPTIONS, savePreferences } from "../services/preferences.js";
 import { createAdmin } from "../admin/index.js";
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
-import { basename, extname } from "node:path";
-import { Readable } from "node:stream";
-import { LocalFileStorage } from "../providers/local.js";
-import { DEFAULT_RULES, rateLimit } from "./ratelimit.js";
+import { downloadResponse } from "../providers/files.js";
+import { DEFAULT_RULES, rateLimit, type RateLimitOptions } from "./ratelimit.js";
 import { embedSnippet, formPage, messagePage, page, readBeaconScript } from "./pages.js";
 
 /** 1x1 の透明 GIF */
@@ -27,21 +25,19 @@ export interface AppOptions {
   enqueue: (ids: string[]) => Promise<void>;
   /** フォームに privacy_url が無いときに使うプライバシーポリシーの URL */
   privacyUrl?: string;
-  /** IP ごとのレート制限を入れる（VPS。Lambda では API Gateway 側で制限する） */
-  rateLimit?: boolean;
+  /** IP ごとのレート制限を入れる。true はプロセス内メモリ（VPS）。Workers はバインディングを渡す。Lambda では API Gateway 側で制限する */
+  rateLimit?: boolean | RateLimitOptions;
+  /**
+   * どの画面を載せるか（既定はどちらも）。Cloudflare では読者向けと管理画面を別の Worker にして、
+   * 管理画面の Worker だけに Cloudflare Access をかけられる。
+   */
+  surfaces?: { public?: boolean; admin?: boolean };
+  /** /admin の前に挟む確認（Cloudflare Access の JWT の確認など） */
+  adminGuard?: MiddlewareHandler;
+  /** 別のサイトのページから fetch で登録 API を呼ぶときに許すオリジン（CORS） */
+  corsOrigins?: string[];
 }
 
-const CONTENT_TYPES: Record<string, string> = {
-  ".pdf": "application/pdf",
-  ".zip": "application/zip",
-  ".epub": "application/epub+zip",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".txt": "text/plain; charset=utf-8",
-  ".mp3": "audio/mpeg",
-  ".mp4": "video/mp4",
-};
 
 interface FormRow {
   id: string;
@@ -128,30 +124,45 @@ export function createApp(getCtx: () => Promise<AppContext>, opts: AppOptions): 
   // 読者向けの送信データは小さいはずなので、大きなリクエストは受けない（管理画面はメール本文を送るので大きめ）
   const smallBody = bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.text("too large", 413) });
   const adminBody = bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.text("too large", 413) });
-  app.use("*", (c, next) => (c.req.path.startsWith("/admin") ? adminBody(c, next) : smallBody(c, next)));
-  app.route("/admin", createAdmin(getCtx, { enqueue: opts.enqueue }));
-
-  if (opts.rateLimit) app.use("*", rateLimit(DEFAULT_RULES));
+  // 外部サービスからの通知（決済の Webhook）は読者向けより少し大きい
+  const hookBody = bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.text("too large", 413) });
+  // 引き継ぎ・バックアップのファイルの読み込みは大きい（Workers の上限は 100MB）
+  const transferBody = bodyLimit({ maxSize: 64 * 1024 * 1024, onError: (c) => c.text("too large", 413) });
+  app.use("*", (c, next) => {
+    const p = c.req.path;
+    if (p === "/admin/transfer/import") return transferBody(c, next);
+    if (p.startsWith("/admin")) return adminBody(c, next);
+    if (p.startsWith("/hooks/")) return hookBody(c, next);
+    return smallBody(c, next);
+  });
+  // レート制限は管理画面より先に入れる（後に入れると /admin には効かない）
+  if (opts.rateLimit) app.use("*", rateLimit(DEFAULT_RULES, opts.rateLimit === true ? Date.now : opts.rateLimit));
+  if (opts.surfaces?.admin !== false) {
+    if (opts.adminGuard) {
+      app.use("/admin", opts.adminGuard);
+      app.use("/admin/*", opts.adminGuard);
+    }
+    app.route("/admin", createAdmin(getCtx, { enqueue: opts.enqueue }));
+  }
 
   app.get("/health", (c) => c.text("ok"));
+  // 管理画面だけの Worker では、読者向けのページを出さない
+  if (opts.surfaces?.public === false) app.use("*", async (c) => c.text("not found", 404));
 
-  // VPS のディスクに置いた特典ファイル（署名付き・期限付きのリンクでだけ配る）
+  if (opts.corsOrigins?.length) {
+    const allowed = new Set(opts.corsOrigins);
+    app.use(
+      "/f/*",
+      cors({ origin: (o) => (allowed.has(o) ? o : null), allowMethods: ["POST"], allowHeaders: ["Content-Type", "Accept"], maxAge: 600 }),
+    );
+  }
+
+  // 自分で配る保存先（VPS のディスク、R2）に置いた特典ファイル（署名付き・期限付きのリンクでだけ配る）
   app.get("/files/:token", async (c) => {
     const ctx = await getCtx();
-    if (!(ctx.storage instanceof LocalFileStorage)) return c.text("not found", 404);
-    const path = ctx.storage.resolveToken(c.req.param("token"));
-    const info = path ? await stat(path).catch(() => undefined) : undefined;
-    if (!path || !info?.isFile()) return c.html(messagePage("ダウンロードできません", "リンクの期限が切れたか、ファイルが見つかりません。メールのリンクからもう一度お試しください。"), 404);
-    const name = basename(path);
-    return new Response(Readable.toWeb(createReadStream(path)) as ReadableStream, {
-      headers: {
-        "Content-Type": CONTENT_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream",
-        "Content-Length": String(info.size),
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    const file = ctx.storage?.open ? await ctx.storage.open(c.req.param("token")) : undefined;
+    if (!file) return c.html(messagePage("ダウンロードできません", "リンクの期限が切れたか、ファイルが見つかりません。メールのリンクからもう一度お試しください。"), 404);
+    return downloadResponse(file);
   });
 
   /** 受付中のフォーム。openOnly なら受付期間の外も「無い」扱いにする */
@@ -209,8 +220,8 @@ export function createApp(getCtx: () => Promise<AppContext>, opts: AppOptions): 
     // 埋め込みを許可したサイト以外からの送信を拒否（自前のフォームページは常に許可）
     if (form.allowed_origins.length > 0) {
       const origin = requestOrigin(c);
-      const own = new URL(ctx.publicBaseUrl).origin;
-      if (!origin || (origin !== own && !form.allowed_origins.includes(origin))) {
+      const own = [ctx.publicBaseUrl, ctx.linkBaseUrl].filter((u): u is string => Boolean(u)).map((u) => new URL(u).origin);
+      if (!origin || (!own.includes(origin) && !form.allowed_origins.includes(origin))) {
         return wantsJson ? c.json({ ok: false, error: "origin" }, 403) : c.html(messagePage("送信できません", "このページからは登録できません。"), 403);
       }
     }
@@ -254,6 +265,8 @@ export function createApp(getCtx: () => Promise<AppContext>, opts: AppOptions): 
     if (r.status === "confirmation-sent") await opts.enqueue([r.messageId]);
     // シングルオプトイン：確認メールなしで登録完了。完了ページへ（既に登録済みの人も同じ画面にして、アドレスの有無を推測させない）
     if (form.double_optin === false && (r.status === "subscribed" || r.status === "already-active")) {
+      // 特典などシナリオの 1 通目をすぐ送れるよう、送信処理を起こす（失敗しても次の定期処理で送られる）
+      if (r.status === "subscribed") await opts.enqueue([]).catch(() => undefined);
       return wantsJson ? c.json({ ok: true, subscribed: true }) : c.redirect(form.thanks_url ?? url(ctx, `/f/${form.slug}/done`), 303);
     }
     // 既に登録済みか・送信を制限中かは画面で区別しない（アドレスの存在を推測されないため）
@@ -310,6 +323,40 @@ export function createApp(getCtx: () => Promise<AppContext>, opts: AppOptions): 
 <p class="muted">配信の停止は、各メールの末尾にある「配信停止」から行えます。</p>`,
       ),
     );
+  });
+
+  // ---- 特定商取引法に基づく表記（設定の「販売者の表記」から自動で作る） ----
+  app.get("/legal/commerce", async (c) => {
+    const ctx = await getCtx();
+    const d = ctx.settings.commerce;
+    if (!d?.sellerName?.trim()) return c.html(messagePage("準備中です", "このページはまだ公開されていません。"), 404);
+    const rows = commerceDisclosureRows(d);
+    return c.html(
+      page(
+        "特定商取引法に基づく表記",
+        `<h1>特定商取引法に基づく表記</h1>
+<dl>${rows.map(([k, v]) => `<dt class="muted">${escapeHtml(k)}</dt><dd style="margin:0 0 12px;white-space:pre-wrap">${escapeHtml(v || "—")}</dd>`).join("")}</dl>`,
+      ),
+    );
+  });
+
+  // ---- 決済サービスからの通知（Webhook）。署名を確かめ、同じ通知は 1 回だけ処理する ----
+  app.post("/hooks/:provider", async (c) => {
+    const ctx = await getCtx();
+    const provider = ctx.payments?.find((p) => p.name === c.req.param("provider"));
+    if (!provider) return c.text("not found", 404);
+    const raw = await c.req.text();
+    let ev;
+    try {
+      ev = await provider.parseWebhook(raw, (n) => c.req.header(n), ctx.now());
+    } catch (e) {
+      if (e instanceof PaymentSignatureError) return c.text("bad signature", 400);
+      throw e;
+    }
+    // 失敗したら 500 を返し、決済サービスに送り直してもらう（記録はトランザクションごと戻る）
+    const outcome = await handlePaymentEvent(ctx, provider.name, ev);
+    if (outcome !== "processed" && outcome !== "duplicate" && outcome !== "ignored") console.log("payment event", provider.name, ev.eventType, outcome);
+    return c.json({ received: true });
   });
 
   // ---- 配信停止 ----

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { checkSenderOverride, escapeHtml, renderEmail, resolveSender, type BodyFormat, type PlaceholderContext, type SenderOverride } from "@tsuzuri/core";
 import type { Context } from "hono";
-import { senderDomains, senderInfoUrl, url, type AppContext } from "../context.js";
+import { senderDomains, linkUrl, senderInfoUrl, type AppContext } from "../context.js";
 import { formatJstDate } from "../time.js";
 import { footerBody } from "../services/footers.js";
 import { listCustomVariables } from "../services/variables.js";
@@ -72,11 +72,11 @@ export async function sampleContext(ctx: AppContext): Promise<PlaceholderContext
       contact: s.contact,
       sender_info: senderInfoUrl(ctx),
       subscribed_date: formatJstDate(ctx.now()),
-      cancel: url(ctx, "/u/preview"),
-      settings: url(ctx, "/p/preview"),
-      download: url(ctx, "/d/preview"),
-      webview: url(ctx, "/w/preview"),
-      confirm: url(ctx, "/confirm/preview"),
+      cancel: linkUrl(ctx, "/u/preview"),
+      settings: linkUrl(ctx, "/p/preview"),
+      download: linkUrl(ctx, "/d/preview"),
+      webview: linkUrl(ctx, "/w/preview"),
+      confirm: linkUrl(ctx, "/confirm/preview"),
     },
     custom: await listCustomVariables(ctx.db),
     attributes: {},
@@ -93,8 +93,8 @@ export async function renderSample(ctx: AppContext, subject: string, body: strin
     format,
     context: await sampleContext(ctx),
     footer: { senderName: s.senderName || "（送信者名未設定）", contact: s.contact || "（問い合わせ先未設定）", senderInfoUrl: senderInfoUrl(ctx) },
-    unsubscribeUrl: url(ctx, "/u/preview"),
-    preferencesUrl: url(ctx, "/p/preview"),
+    unsubscribeUrl: linkUrl(ctx, "/u/preview"),
+    preferencesUrl: linkUrl(ctx, "/p/preview"),
     ...(footerTemplate ? { footerTemplate } : {}),
   });
 }

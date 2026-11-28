@@ -1,7 +1,8 @@
 import { PGlite } from "@electric-sql/pglite";
 import { MemoryProvider } from "@tsuzuri/core";
 import type { AppContext } from "../src/context.js";
-import { migrate, type Db } from "../src/db.js";
+import type { Db } from "../src/db.js";
+import { migrate } from "../src/migrate.js";
 
 export function pgliteDb(pg: PGlite): Db {
   const wrap = (q: Pick<PGlite, "query">): Db => ({
@@ -55,6 +56,40 @@ export async function createEnv(start = new Date("2026-11-13T00:00:00Z")): Promi
     },
     advanceDays: (n) => {
       now = new Date(now.getTime() + n * 86_400_000);
+    },
+  };
+}
+
+/** R2 のバケットの代わり（テスト用。メモリに置く） */
+export function memoryBucket(): import("../src/providers/r2.js").R2BucketLike & { objects: Map<string, Uint8Array> } {
+  const objects = new Map<string, Uint8Array>();
+  const toBytes = (v: ArrayBuffer | Uint8Array | string) =>
+    typeof v === "string" ? new TextEncoder().encode(v) : v instanceof Uint8Array ? new Uint8Array(v) : new Uint8Array(v);
+  return {
+    objects,
+    async get(key) {
+      const v = objects.get(key);
+      if (!v) return null;
+      return { key, size: v.length, uploaded: new Date(), body: new Response(v.slice()).body! };
+    },
+    async put(key, value) {
+      objects.set(key, toBytes(value));
+      return {};
+    },
+    async list(o = {}) {
+      const keys = [...objects.keys()].filter((k) => !o.prefix || k.startsWith(o.prefix)).sort();
+      const start = o.cursor ? Number(o.cursor) : 0;
+      const limit = o.limit ?? 3; // 小さくして、続きの読み出し（cursor）も試す
+      const page = keys.slice(start, start + limit);
+      const truncated = start + limit < keys.length;
+      return {
+        objects: page.map((k) => ({ key: k, size: objects.get(k)!.length, uploaded: new Date() })),
+        truncated,
+        ...(truncated ? { cursor: String(start + limit) } : {}),
+      };
+    },
+    async delete(keys) {
+      for (const k of Array.isArray(keys) ? keys : [keys]) objects.delete(k);
     },
   };
 }

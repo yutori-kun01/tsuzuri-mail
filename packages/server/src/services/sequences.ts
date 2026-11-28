@@ -1,4 +1,5 @@
 import { idempotencyKey, type Tier } from "@tsuzuri/core";
+import { PRODUCT_ENTITLED_SQL } from "./entitlements.js";
 import type { AppContext } from "../context.js";
 import type { Db } from "../db.js";
 import { stepSendAt } from "../time.js";
@@ -144,8 +145,13 @@ export async function scheduleDueSteps(ctx: AppContext, limit = 200): Promise<st
            FROM contacts c WHERE c.id = $1`,
         [e.contact_id],
       );
-      // 停止・一時停止中の読者はシナリオも止める（再確認シナリオだけは paused でも進める）
-      const sendable = who?.channel_id && (who.status === "active" || (e.purpose === "reengage" && who.status === "paused"));
+      // 停止・一時停止中の読者はシナリオも止める（再確認シナリオだけは paused でも進める）。
+      // 商品のシナリオは、買った人（受け取る権利がある人）に、配信を停止していない限り届ける
+      const entitled =
+        e.purpose === "product" && who?.status !== "unsubscribed"
+          ? (await tx.query(`SELECT 1 WHERE ${PRODUCT_ENTITLED_SQL("$1", "$2")}`, [e.contact_id, e.sequence_id])).length > 0
+          : false;
+      const sendable = who?.channel_id && (who.status === "active" || (e.purpose === "reengage" && who.status === "paused") || entitled);
       if (!sendable) {
         await tx.query("UPDATE enrollments SET status = 'stopped', updated_at = $2 WHERE id = $1", [e.id, now]);
         continue;

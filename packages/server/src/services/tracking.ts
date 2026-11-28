@@ -95,7 +95,15 @@ export async function recordDownload(ctx: AppContext, token: string, req: Reques
   const subject = verifyToken(token, "download", ctx.secret);
   const [contactId, formId, messageId] = subject?.split("/") ?? [];
   if (!contactId || !formId || !ctx.storage) return undefined;
-  const [f] = await ctx.db.query<{ lead_magnet_key: string | null }>("SELECT lead_magnet_key FROM forms WHERE id = $1", [formId]);
+  // 商品のファイル（p:<商品の id>）は、受け取る権利がある間だけ配る（全額返金で止まる）
+  const productId = formId.startsWith("p:") ? formId.slice(2) : undefined;
+  const [f] = productId
+    ? await ctx.db.query<{ lead_magnet_key: string | null }>(
+        `SELECT p.delivery_key AS lead_magnet_key FROM products p
+          WHERE p.id::text = $1 AND EXISTS (SELECT 1 FROM entitlements en WHERE en.product_id = p.id AND en.contact_id::text = $2 AND en.revoked_at IS NULL)`,
+        [productId, contactId],
+      )
+    : await ctx.db.query<{ lead_magnet_key: string | null }>("SELECT lead_magnet_key FROM forms WHERE id = $1", [formId]);
   if (!f?.lead_magnet_key) return undefined;
   const now = ctx.now();
   if (req.method.toUpperCase() !== "HEAD") {
@@ -103,7 +111,7 @@ export async function recordDownload(ctx: AppContext, token: string, req: Reques
       await tx.query("INSERT INTO events (contact_id, message_id, type, data, occurred_at) VALUES ($1, $2, 'goal', $3, $4)", [
         contactId,
         messageId ?? null,
-        JSON.stringify({ goal: "download", formId }),
+        JSON.stringify(productId ? { goal: "download", productId } : { goal: "download", formId }),
         now,
       ]);
       await markResponded(tx, contactId, messageId ?? null, now);

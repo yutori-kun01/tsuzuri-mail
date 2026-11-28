@@ -2,13 +2,9 @@ import { GetEmailIdentityCommand, SendEmailCommand, type SESv2Client } from "@aw
 import type { MailProvider, OutgoingMessage, SendResult } from "@tsuzuri/core";
 import type { IdentityStatus } from "../context.js";
 
-/** 表示名に ASCII 以外を含む場合は RFC 2047 の encoded-word にする（SES の要件） */
-export function formatFrom(address: string, name?: string): string {
-  if (!name) return address;
-  const ascii = /^[\x20-\x7e]*$/.test(name);
-  const display = ascii ? `"${name.replace(/["\\]/g, "\\$&")}"` : `=?UTF-8?B?${Buffer.from(name, "utf8").toString("base64")}?=`;
-  return `${display} <${address}>`;
-}
+export { formatFrom } from "./from.js";
+export { ConsoleProvider } from "./console.js";
+import { formatFrom } from "./from.js";
 
 /** SES のタグ値に使えない文字を置き換える */
 function tagValue(v: string): string {
@@ -41,15 +37,6 @@ export class SesProvider implements MailProvider {
     );
     if (!r.MessageId) throw new Error("SES returned no MessageId");
     return { providerMessageId: r.MessageId };
-  }
-}
-
-/** ローカル開発用：送らずに標準出力へ要約を出す（宛先は伏せる） */
-export class ConsoleProvider implements MailProvider {
-  readonly name = "console";
-  async send(m: OutgoingMessage): Promise<SendResult> {
-    console.log(`[mail] ${m.idempotencyKey} subject="${m.subject}"\n${m.text}\n`);
-    return { providerMessageId: `console-${m.idempotencyKey}` };
   }
 }
 

@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
+import { HTMX_SOURCE } from "../src/admin/generated/htmx.js";
+import { ICON_NODES } from "../src/admin/generated/icon-nodes.js";
 import { missingIcons } from "../src/admin/icons.js";
+
+const require = createRequire(import.meta.url);
 import { delta, donut, lineChart, ring, sparkline } from "../src/admin/ui.js";
 
 describe("admin UI kit", () => {
@@ -10,6 +15,14 @@ describe("admin UI kit", () => {
     const names = [...block.matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1]!);
     expect(names.length).toBeGreaterThan(20);
     expect(missingIcons(names)).toEqual([]);
+    // 書き出したアイコン（generated/icon-nodes.ts）が lucide-static と一致する（ずれていたら pnpm gen:assets）
+    const all = JSON.parse(readFileSync(require.resolve("lucide-static/icon-nodes.json"), "utf8")) as Record<string, unknown>;
+    expect(Object.keys(ICON_NODES).sort()).toEqual([...new Set(names)].sort());
+    for (const n of names) expect(ICON_NODES[n]).toEqual(all[n]);
+  });
+
+  it("書き出した htmx が node_modules の版と一致する（ずれていたら pnpm gen:assets）", () => {
+    expect(HTMX_SOURCE).toBe(readFileSync(require.resolve("htmx.org/dist/htmx.min.js"), "utf8"));
   });
 
   it("グラフは値が全部 0 でも壊れない", () => {
